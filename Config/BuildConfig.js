@@ -233,3 +233,11 @@ class BuildConfig {
      */
     static getInstance() {
         if (!BuildConfig.instance) {
+            new BuildConfig();
+        }
+        return BuildConfig.instance;
+    }
+}
+
+// Singleton instance
+BuildConfig.instance = null;
