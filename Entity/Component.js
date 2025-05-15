@@ -1,16 +1,18 @@
 /**
  * Component.js - Temel bileşen sınıfı
- * Oyun nesnelerine işlevsellik eklemek için
+ * Tüm bileşenler için temel sınıf
  */
 class Component {
     constructor() {
-        this.id = Component._generateId();
         this.active = true;
-        this.gameObject = null; // Bağlı olduğu game object
+        this.gameObject = null;
+        this.transform = null;
+        this.scene = null;
+        this.enabled = true;
     }
     
     /**
-     * Bileşen oluşturulduğunda çağrılır
+     * Bileşen ilk eklendiğinde bir kere çağrılır
      */
     start() {
         // Alt sınıflarda override edilebilir
@@ -25,10 +27,10 @@ class Component {
     }
     
     /**
-     * Her karede render işleminden sonra çağrılır
+     * Fizik güncellemesi öncesinde çağrılır
      * @param {Number} deltaTime - Geçen süre (saniye)
      */
-    lateUpdate(deltaTime) {
+    fixedUpdate(deltaTime) {
         // Alt sınıflarda override edilebilir
     }
     
@@ -41,6 +43,13 @@ class Component {
     }
     
     /**
+     * Bileşen yok edildiğinde çağrılır
+     */
+    onDestroy() {
+        // Alt sınıflarda override edilebilir
+    }
+    
+    /**
      * Çarpışma başladığında çağrılır
      * @param {Collider} other - Çarpışan diğer collider
      */
@@ -49,7 +58,7 @@ class Component {
     }
     
     /**
-     * Çarpışma devam ettiğinde çağrılır
+     * Çarpışma devam ederken çağrılır
      * @param {Collider} other - Çarpışan diğer collider
      */
     onCollisionStay(other) {
@@ -65,54 +74,66 @@ class Component {
     }
     
     /**
-     * Bileşen etkinleştirildiğinde çağrılır
+     * Tetikleyici çarpışma başladığında çağrılır
+     * @param {Collider} other - Çarpışan diğer collider
      */
-    onEnable() {
+    onTriggerEnter(other) {
         // Alt sınıflarda override edilebilir
     }
     
     /**
-     * Bileşen devre dışı bırakıldığında çağrılır
+     * Tetikleyici çarpışma devam ederken çağrılır
+     * @param {Collider} other - Çarpışan diğer collider
      */
-    onDisable() {
+    onTriggerStay(other) {
         // Alt sınıflarda override edilebilir
     }
     
     /**
-     * Bileşen yok edildiğinde çağrılır
+     * Tetikleyici çarpışma bittiğinde çağrılır
+     * @param {Collider} other - Çarpışan diğer collider
      */
-    onDestroy() {
+    onTriggerExit(other) {
         // Alt sınıflarda override edilebilir
     }
     
     /**
-     * Bileşeni etkinleştirir/devre dışı bırakır
-     * @param {Boolean} value - Etkin olup olmadığı
+     * Aktiflik durumunu değiştirir
+     * @param {Boolean} active - Aktif mi
      */
-    setActive(value) {
-        if (this.active !== value) {
-            this.active = value;
-            
-            if (this.active) {
-                this.onEnable();
-            } else {
-                this.onDisable();
-            }
+    setActive(active) {
+        this.active = active;
+    }
+    
+    /**
+     * Etkinlik durumunu değiştirir
+     * @param {Boolean} enabled - Etkin mi
+     */
+    setEnabled(enabled) {
+        this.enabled = enabled;
+    }
+    
+    /**
+     * Transform referansını günceller
+     */
+    updateTransform() {
+        if (this.gameObject) {
+            this.transform = this.gameObject.transform;
         }
     }
     
     /**
-     * Dönüşüm bileşenine kolay erişim
+     * Bileşeni klonlar
+     * @return {Component} Klonlanan bileşen
      */
-    get transform() {
-        return this.gameObject ? this.gameObject.transform : null;
-    }
-    
-    /**
-     * Benzersiz ID üretir
-     * @return {String} Benzersiz ID
-     */
-    static _generateId() {
-        return 'comp_' + Math.random().toString(36).substr(2, 9);
+    clone() {
+        // Varsayılan olarak aynı tipte yeni bir bileşen döndür
+        const clone = new this.constructor();
+        clone.active = this.active;
+        clone.enabled = this.enabled;
+        
+        // Alt sınıflarda daha fazla özellik kopyalanmalıdır
+        
+        return clone;
     }
 }

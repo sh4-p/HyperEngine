@@ -1,41 +1,196 @@
 /**
  * Transform.js - Dönüşüm bileşeni
- * Konum, döndürme ve ölçek bilgilerini yönetir
+ * Oyun nesnesinin pozisyon, rotasyon ve ölçek bilgilerini yönetir
  */
 class Transform extends Component {
     constructor() {
         super();
         
-        // Yerel dönüşüm değerleri (parent'a göre)
+        // Yerel dönüşüm özellikleri
         this.position = { x: 0, y: 0 };
-        this.rotation = 0;  // Radyan cinsinden
+        this.rotation = 0; // Radyan cinsinden
         this.scale = { x: 1, y: 1 };
         
-        // Dünya koordinatlarındaki değerler (önbellek)
-        this._worldPosition = { x: 0, y: 0 };
-        this._worldRotation = 0;
-        this._worldScale = { x: 1, y: 1 };
+        // Üst Transform referansı
+        this.parent = null;
         
-        // Değişiklik bayrağı
-        this._dirty = true;
+        // Alt Transform'lar
+        this.children = [];
     }
     
     /**
-     * Dünya konumunu hesaplar
-     * @return {Object} Dünya konumu {x, y}
+     * Üst transform ayarlar
+     * @param {Transform} parent - Üst transform
+     */
+    setParent(parent) {
+        // Mevcut üst transform'dan kaldır
+        if (this.parent) {
+            const index = this.parent.children.indexOf(this);
+            if (index !== -1) {
+                this.parent.children.splice(index, 1);
+            }
+        }
+        
+        // Yeni üst transform'a ekle
+        this.parent = parent;
+        
+        if (parent) {
+            parent.children.push(this);
+            
+            // Dünya koordinatlarını koru (üst değiştiğinde yerel koordinatları ayarla)
+            this._updateLocalFromWorld();
+        }
+    }
+    
+    /**
+     * Yerel pozisyonu ayarlar
+     * @param {Number} x - X koordinatı
+     * @param {Number} y - Y koordinatı
+     */
+    setPosition(x, y) {
+        this.position.x = x;
+        this.position.y = y;
+    }
+    
+    /**
+     * Yerel rotasyonu ayarlar
+     * @param {Number} rotation - Rotasyon (radyan)
+     */
+    setRotation(rotation) {
+        this.rotation = rotation;
+    }
+    
+    /**
+     * Yerel ölçeği ayarlar
+     * @param {Number} x - X ölçeği
+     * @param {Number} y - Y ölçeği
+     */
+    setScale(x, y) {
+        this.scale.x = x;
+        this.scale.y = y || x; // Tek parametre verilirse kare ölçek
+    }
+    
+    /**
+     * Dünya pozisyonunu ayarlar
+     * @param {Number} x - X koordinatı
+     * @param {Number} y - Y koordinatı
+     */
+    setWorldPosition(x, y) {
+        if (!this.parent) {
+            // Üst yoksa dünya pozisyonu yerel pozisyona eşittir
+            this.position.x = x;
+            this.position.y = y;
+        } else {
+            // Dünya koordinatlarını yerel koordinatlara çevir
+            const worldPos = { x, y };
+            const parentWorldPos = this.parent.getWorldPosition();
+            const parentWorldRot = this.parent.getWorldRotation();
+            const parentWorldScale = this.parent.getWorldScale();
+            
+            // Üst transformu tersine çevir
+            
+            // Üst pozisyonu çıkar
+            const relX = worldPos.x - parentWorldPos.x;
+            const relY = worldPos.y - parentWorldPos.y;
+            
+            // Üst rotasyonu tersine çevir
+            const cosRot = Math.cos(-parentWorldRot);
+            const sinRot = Math.sin(-parentWorldRot);
+            
+            const rotatedX = relX * cosRot - relY * sinRot;
+            const rotatedY = relX * sinRot + relY * cosRot;
+            
+            // Üst ölçeği tersine çevir
+            this.position.x = rotatedX / parentWorldScale.x;
+            this.position.y = rotatedY / parentWorldScale.y;
+        }
+    }
+    
+    /**
+     * Dünya rotasyonunu ayarlar
+     * @param {Number} rotation - Rotasyon (radyan)
+     */
+    setWorldRotation(rotation) {
+        if (!this.parent) {
+            // Üst yoksa dünya rotasyonu yerel rotasyona eşittir
+            this.rotation = rotation;
+        } else {
+            // Dünya rotasyonunu yerel rotasyona çevir
+            const parentWorldRot = this.parent.getWorldRotation();
+            this.rotation = rotation - parentWorldRot;
+        }
+    }
+    
+    /**
+     * Dünya ölçeğini ayarlar
+     * @param {Number} x - X ölçeği
+     * @param {Number} y - Y ölçeği
+     */
+    setWorldScale(x, y) {
+        if (!this.parent) {
+            // Üst yoksa dünya ölçeği yerel ölçeğe eşittir
+            this.scale.x = x;
+            this.scale.y = y || x;
+        } else {
+            // Dünya ölçeğini yerel ölçeğe çevir
+            const parentWorldScale = this.parent.getWorldScale();
+            this.scale.x = x / parentWorldScale.x;
+            this.scale.y = (y || x) / parentWorldScale.y;
+        }
+    }
+    
+    /**
+     * Dünya pozisyonunu hesaplar
+     * @return {Object} Dünya pozisyonu {x, y}
      */
     getWorldPosition() {
-        this._updateWorldTransform();
-        return { ...this._worldPosition };
+        if (!this.parent) {
+            // Üst yoksa dünya pozisyonu yerel pozisyona eşittir
+            return { x: this.position.x, y: this.position.y };
+        }
+        
+        // Üst transform'un dünya pozisyonu, rotasyonu ve ölçeği
+        const parentPos = this.parent.getWorldPosition();
+        const parentRot = this.parent.getWorldRotation();
+        const parentScale = this.parent.getWorldScale();
+        
+        // Yerel koordinatları
+        const localX = this.position.x;
+        const localY = this.position.y;
+        
+        // Ölçekle
+        const scaledX = localX * parentScale.x;
+        const scaledY = localY * parentScale.y;
+        
+        // Döndür
+        const cosRot = Math.cos(parentRot);
+        const sinRot = Math.sin(parentRot);
+        
+        const rotatedX = scaledX * cosRot - scaledY * sinRot;
+        const rotatedY = scaledX * sinRot + scaledY * cosRot;
+        
+        // Üst pozisyonu ekle
+        return {
+            x: parentPos.x + rotatedX,
+            y: parentPos.y + rotatedY
+        };
     }
     
     /**
-     * Dünya döndürmesini hesaplar
-     * @return {Number} Dünya döndürmesi (radyan)
+     * Dünya rotasyonunu hesaplar
+     * @return {Number} Dünya rotasyonu (radyan)
      */
     getWorldRotation() {
-        this._updateWorldTransform();
-        return this._worldRotation;
+        if (!this.parent) {
+            // Üst yoksa dünya rotasyonu yerel rotasyona eşittir
+            return this.rotation;
+        }
+        
+        // Üst transform'un dünya rotasyonu
+        const parentRot = this.parent.getWorldRotation();
+        
+        // Rotasyonları topla
+        return this.rotation + parentRot;
     }
     
     /**
@@ -43,137 +198,249 @@ class Transform extends Component {
      * @return {Object} Dünya ölçeği {x, y}
      */
     getWorldScale() {
-        this._updateWorldTransform();
-        return { ...this._worldScale };
-    }
-    
-    /**
-     * Dünya dönüşüm değerlerini günceller
-     */
-    _updateWorldTransform() {
-        if (!this._dirty && this.gameObject && !this.gameObject.parent) {
-            return; // Değişiklik yoksa ve parent yoksa güncelleme yapma
+        if (!this.parent) {
+            // Üst yoksa dünya ölçeği yerel ölçeğe eşittir
+            return { x: this.scale.x, y: this.scale.y };
         }
         
-        this._dirty = false;
+        // Üst transform'un dünya ölçeği
+        const parentScale = this.parent.getWorldScale();
         
-        if (!this.gameObject || !this.gameObject.parent) {
-            // Parent yoksa, yerel değerler dünya değerleridir
-            this._worldPosition = { ...this.position };
-            this._worldRotation = this.rotation;
-            this._worldScale = { ...this.scale };
-            return;
-        }
-        
-        // Parent'ın dönüşüm bileşenini al
-        const parentTransform = this.gameObject.parent.transform;
-        
-        // Parent'ın dünya değerlerini al
-        const parentWorldPosition = parentTransform.getWorldPosition();
-        const parentWorldRotation = parentTransform.getWorldRotation();
-        const parentWorldScale = parentTransform.getWorldScale();
-        
-        // Dünya rotasyonunu hesapla
-        this._worldRotation = parentWorldRotation + this.rotation;
-        
-        // Dünya ölçeğini hesapla
-        this._worldScale.x = parentWorldScale.x * this.scale.x;
-        this._worldScale.y = parentWorldScale.y * this.scale.y;
-        
-        // Rotasyonu hesaba katarak dünya konumunu hesapla
-        const cosRot = Math.cos(parentWorldRotation);
-        const sinRot = Math.sin(parentWorldRotation);
-        
-        this._worldPosition.x = parentWorldPosition.x + 
-                              (this.position.x * cosRot - this.position.y * sinRot) * 
-                              parentWorldScale.x;
-        
-        this._worldPosition.y = parentWorldPosition.y + 
-                              (this.position.x * sinRot + this.position.y * cosRot) * 
-                              parentWorldScale.y;
+        // Ölçekleri çarp
+        return {
+            x: this.scale.x * parentScale.x,
+            y: this.scale.y * parentScale.y
+        };
     }
     
     /**
-     * Nesneyi belirtilen konuma taşır
-     * @param {Number} x - X koordinatı
-     * @param {Number} y - Y koordinatı
+     * Sağa doğru birim vektörü hesaplar
+     * @return {Object} Sağ vektör {x, y}
      */
-    translate(x, y) {
-        this.position.x += x;
-        this.position.y += y;
-        this._dirty = true;
+    right() {
+        const worldRot = this.getWorldRotation();
+        return {
+            x: Math.cos(worldRot),
+            y: Math.sin(worldRot)
+        };
     }
     
     /**
-     * Nesneyi belirtilen açıda döndürür
-     * @param {Number} angle - Döndürme açısı (radyan)
+     * Yukarıya doğru birim vektörü hesaplar
+     * @return {Object} Yukarı vektör {x, y}
+     */
+    up() {
+        const worldRot = this.getWorldRotation();
+        return {
+            x: -Math.sin(worldRot),
+            y: Math.cos(worldRot)
+        };
+    }
+    
+    /**
+     * Yerel koordinatları dünya koordinatlarına dönüştürür
+     * @param {Number} x - Yerel X koordinatı
+     * @param {Number} y - Yerel Y koordinatı
+     * @return {Object} Dünya koordinatları {x, y}
+     */
+    localToWorld(x, y) {
+        // Transform özellikleri
+        const position = this.getWorldPosition();
+        const rotation = this.getWorldRotation();
+        const scale = this.getWorldScale();
+        
+        // Ölçekle
+        const scaledX = x * scale.x;
+        const scaledY = y * scale.y;
+        
+        // Döndür
+        const cosRot = Math.cos(rotation);
+        const sinRot = Math.sin(rotation);
+        
+        const rotatedX = scaledX * cosRot - scaledY * sinRot;
+        const rotatedY = scaledX * sinRot + scaledY * cosRot;
+        
+        // Pozisyonu ekle
+        return {
+            x: position.x + rotatedX,
+            y: position.y + rotatedY
+        };
+    }
+    
+    /**
+     * Dünya koordinatlarını yerel koordinatlara dönüştürür
+     * @param {Number} x - Dünya X koordinatı
+     * @param {Number} y - Dünya Y koordinatı
+     * @return {Object} Yerel koordinatlar {x, y}
+     */
+    worldToLocal(x, y) {
+        // Transform özellikleri
+        const position = this.getWorldPosition();
+        const rotation = this.getWorldRotation();
+        const scale = this.getWorldScale();
+        
+        // Pozisyonu çıkar
+        const translatedX = x - position.x;
+        const translatedY = y - position.y;
+        
+        // Döndürmeyi tersine çevir
+        const cosRot = Math.cos(-rotation);
+        const sinRot = Math.sin(-rotation);
+        
+        const unrotatedX = translatedX * cosRot - translatedY * sinRot;
+        const unrotatedY = translatedX * sinRot + translatedY * cosRot;
+        
+        // Ölçeği tersine çevir
+        return {
+            x: unrotatedX / scale.x,
+            y: unrotatedY / scale.y
+        };
+    }
+    
+    /**
+     * Belirtilen yöne doğru hareket eder
+     * @param {Number} x - X yönü
+     * @param {Number} y - Y yönü
+     * @param {Number} distance - Mesafe
+     */
+    translate(x, y, distance = 1) {
+        const normalized = this._normalize(x, y);
+        this.position.x += normalized.x * distance;
+        this.position.y += normalized.y * distance;
+    }
+    
+    /**
+     * İleri yönde hareket eder
+     * @param {Number} distance - Mesafe
+     */
+    moveForward(distance) {
+        const up = this.up();
+        this.translate(up.x, up.y, distance);
+    }
+    
+    /**
+     * Sağa doğru hareket eder
+     * @param {Number} distance - Mesafe
+     */
+    moveRight(distance) {
+        const right = this.right();
+        this.translate(right.x, right.y, distance);
+    }
+    
+    /**
+     * Rotasyonu belirtilen açı kadar değiştirir
+     * @param {Number} angle - Açı (radyan)
      */
     rotate(angle) {
         this.rotation += angle;
-        this._dirty = true;
     }
     
     /**
-     * Nesneyi belirtilen faktörde ölçeklendirir
-     * @param {Number} x - X ölçek faktörü
-     * @param {Number} y - Y ölçek faktörü
+     * Hedefe doğru döner
+     * @param {Number} x - Hedef X koordinatı
+     * @param {Number} y - Hedef Y koordinatı
+     * @param {Boolean} worldSpace - Dünya koordinatları mı
      */
-    setScale(x, y) {
-        this.scale.x = x;
-        this.scale.y = y;
-        this._dirty = true;
+    lookAt(x, y, worldSpace = true) {
+        let targetX, targetY;
+        
+        if (worldSpace) {
+            // Dünya koordinatlarına bakış
+            const worldPos = this.getWorldPosition();
+            targetX = x - worldPos.x;
+            targetY = y - worldPos.y;
+            
+            // Yeni rotasyonu hesapla
+            const angle = Math.atan2(targetY, targetX);
+            
+            // Dünya rotasyonunu ayarla
+            this.setWorldRotation(angle);
+        } else {
+            // Yerel koordinatlarına bakış
+            targetX = x - this.position.x;
+            targetY = y - this.position.y;
+            
+            // Yeni rotasyonu hesapla
+            const angle = Math.atan2(targetY, targetX);
+            
+            // Yerel rotasyonu ayarla
+            this.rotation = angle;
+        }
     }
     
     /**
-     * Yerel konumu ayarlar
-     * @param {Number} x - X koordinatı
-     * @param {Number} y - Y koordinatı
+     * İki nokta arasındaki mesafeyi hesaplar
+     * @param {Transform} other - Diğer transform
+     * @param {Boolean} worldSpace - Dünya koordinatları mı
+     * @return {Number} Mesafe
      */
-    setPosition(x, y) {
-        this.position.x = x;
-        this.position.y = y;
-        this._dirty = true;
+    distance(other, worldSpace = true) {
+        if (worldSpace) {
+            const posA = this.getWorldPosition();
+            const posB = other.getWorldPosition();
+            
+            const dx = posB.x - posA.x;
+            const dy = posB.y - posA.y;
+            
+            return Math.sqrt(dx * dx + dy * dy);
+        } else {
+            const dx = other.position.x - this.position.x;
+            const dy = other.position.y - this.position.y;
+            
+            return Math.sqrt(dx * dx + dy * dy);
+        }
     }
     
     /**
-     * Yerel döndürmeyi ayarlar
-     * @param {Number} angle - Döndürme açısı (radyan)
+     * Dünya koordinatlarına göre yerel koordinatları günceller
+     * @private
      */
-    setRotation(angle) {
-        this.rotation = angle;
-        this._dirty = true;
-    }
-    
-    /**
-     * İki nokta arasındaki yöne bakması için nesneyi döndürür
-     * @param {Number} targetX - Hedef X koordinatı
-     * @param {Number} targetY - Hedef Y koordinatı
-     */
-    lookAt(targetX, targetY) {
+    _updateLocalFromWorld() {
+        if (!this.parent) return;
+        
+        // Dünya koordinatlarını hesapla
         const worldPos = this.getWorldPosition();
-        const dx = targetX - worldPos.x;
-        const dy = targetY - worldPos.y;
+        const worldRot = this.getWorldRotation();
+        const worldScale = this.getWorldScale();
         
-        // arctan ile açıyı hesapla
-        let angle = Math.atan2(dy, dx);
-        
-        // Yerel rotasyonu hesapla
-        if (this.gameObject && this.gameObject.parent) {
-            const parentRotation = this.gameObject.parent.transform.getWorldRotation();
-            angle -= parentRotation;
-        }
-        
-        this.rotation = angle;
-        this._dirty = true;
+        // Yeni dünya koordinatlarını ayarla (yerel koordinatlar otomatik hesaplanacak)
+        this.setWorldPosition(worldPos.x, worldPos.y);
+        this.setWorldRotation(worldRot);
+        this.setWorldScale(worldScale.x, worldScale.y);
     }
     
     /**
-     * Transform güncellendiğinde çağrılır
+     * Vektörü normalleştirir
+     * @param {Number} x - X bileşeni
+     * @param {Number} y - Y bileşeni
+     * @return {Object} Normalleştirilmiş vektör {x, y}
+     * @private
      */
-    update() {
-        // Transform değiştiğinde dünya koordinatlarını güncelle
-        if (this._dirty) {
-            this._updateWorldTransform();
+    _normalize(x, y) {
+        const length = Math.sqrt(x * x + y * y);
+        
+        if (length === 0) {
+            return { x: 0, y: 0 };
         }
+        
+        return {
+            x: x / length,
+            y: y / length
+        };
+    }
+    
+    /**
+     * Bileşeni klonlar
+     * @return {Transform} Klonlanan transform
+     */
+    clone() {
+        const clone = new Transform();
+        clone.position.x = this.position.x;
+        clone.position.y = this.position.y;
+        clone.rotation = this.rotation;
+        clone.scale.x = this.scale.x;
+        clone.scale.y = this.scale.y;
+        
+        return clone;
     }
 }

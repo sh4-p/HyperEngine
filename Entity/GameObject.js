@@ -1,24 +1,21 @@
 /**
- * GameObject.js - Temel oyun nesnesi sınıfı
- * Tüm oyun nesneleri için temel sınıf
+ * GameObject.js - Temel oyun nesnesi
+ * Oyun içindeki her nesnenin temel sınıfı
  */
 class GameObject {
     constructor(name = "GameObject") {
         this.id = GameObject._generateId();
         this.name = name;
-        this.active = true;
         this.tag = "";
         this.layer = 0;
+        this.active = true;
         
-        // Bileşen yönetimi
+        // Bileşenler
         this.components = [];
-        this.componentsByType = {};
-        
-        // Dönüşüm bileşeni (her oyun nesnesinin sahip olması gereken)
         this.transform = new Transform();
         this.addComponent(this.transform);
         
-        // Ebeveyn-çocuk ilişkisi
+        // Hiyerarşi
         this.parent = null;
         this.children = [];
         
@@ -27,40 +24,42 @@ class GameObject {
     }
     
     /**
-     * Game Object'i günceller
+     * Her karede çağrılır
      * @param {Number} deltaTime - Geçen süre (saniye)
      */
     update(deltaTime) {
+        // Nesne aktif değilse güncelleme
         if (!this.active) return;
         
         // Tüm bileşenleri güncelle
         for (const component of this.components) {
-            if (component.active) {
+            if (component.active && component.update) {
                 component.update(deltaTime);
             }
         }
         
-        // Tüm çocukları güncelle
+        // Alt nesneleri güncelle
         for (const child of this.children) {
             child.update(deltaTime);
         }
     }
     
     /**
-     * Game Object'i render eder
+     * Render işlemi sırasında çağrılır
      * @param {Renderer} renderer - Renderer nesnesi
      */
     render(renderer) {
+        // Nesne aktif değilse render etme
         if (!this.active) return;
         
         // Tüm bileşenleri render et
         for (const component of this.components) {
-            if (component.active) {
+            if (component.active && component.render) {
                 component.render(renderer);
             }
         }
         
-        // Tüm çocukları render et
+        // Alt nesneleri render et
         for (const child of this.children) {
             child.render(renderer);
         }
@@ -77,21 +76,26 @@ class GameObject {
             return null;
         }
         
-        // Bileşeni nesneye bağla
-        component.gameObject = this;
+        // Bileşen zaten ekli mi kontrol et
+        if (this.components.includes(component)) {
+            return component;
+        }
         
-        // Bileşeni dizilere ekle
+        // Bileşeni diziye ekle
         this.components.push(component);
         
-        // Türüne göre kaydet
-        const type = component.constructor.name;
-        if (!this.componentsByType[type]) {
-            this.componentsByType[type] = [];
-        }
-        this.componentsByType[type].push(component);
+        // Bileşene game object'i bildir
+        component.gameObject = this;
         
-        // Bileşen başlatma
-        component.start();
+        // Transform değilse scene'i bildir
+        if (!(component instanceof Transform) && this.scene) {
+            component.scene = this.scene;
+        }
+        
+        // Start metodunu çağır (bileşen eklendikten sonra)
+        if (component.start) {
+            component.start();
+        }
         
         return component;
     }
@@ -101,52 +105,64 @@ class GameObject {
      * @param {Component} component - Kaldırılacak bileşen
      */
     removeComponent(component) {
+        // Transform bileşeni kaldırılamaz
+        if (component === this.transform) {
+            console.error("Transform bileşeni kaldırılamaz");
+            return;
+        }
+        
         const index = this.components.indexOf(component);
+        
         if (index !== -1) {
+            // OnDestroy metodunu çağır (bileşen kaldırılmadan önce)
+            if (component.onDestroy) {
+                component.onDestroy();
+            }
+            
             // Bileşeni diziden kaldır
             this.components.splice(index, 1);
             
-            // Türüne göre diziden kaldır
-            const type = component.constructor.name;
-            if (this.componentsByType[type]) {
-                const typeIndex = this.componentsByType[type].indexOf(component);
-                if (typeIndex !== -1) {
-                    this.componentsByType[type].splice(typeIndex, 1);
-                }
-            }
-            
-            // Bileşenin bağlantısını kaldır
+            // Bileşenden game object referansını kaldır
             component.gameObject = null;
+            component.scene = null;
         }
     }
     
     /**
-     * Belirtilen türdeki ilk bileşeni bulur
-     * @param {String} type - Bileşen türü
+     * Bileşen tipine göre bileşen bulur
+     * @param {String} type - Bileşen tipi (sınıf adı)
      * @return {Component} Bulunan bileşen veya null
      */
     getComponent(type) {
-        if (this.componentsByType[type] && this.componentsByType[type].length > 0) {
-            return this.componentsByType[type][0];
+        // "Transform" şeklinde string veya Transform sınıfı şeklinde referans olabilir
+        const typeName = typeof type === 'string' ? type : type.name;
+        
+        for (const component of this.components) {
+            // Constructor.name kullanarak sınıf adını kontrol et
+            if (component.constructor.name === typeName) {
+                return component;
+            }
         }
+        
         return null;
     }
     
     /**
-     * Belirtilen türdeki tüm bileşenleri bulur
-     * @param {String} type - Bileşen türü
-     * @return {Array} Bileşen dizisi
+     * Bileşen tipine göre tüm bileşenleri bulur
+     * @param {String} type - Bileşen tipi (sınıf adı)
+     * @return {Array} Bulunan bileşenler dizisi
      */
     getComponents(type) {
-        if (this.componentsByType[type]) {
-            return [...this.componentsByType[type]];
-        }
-        return [];
+        const typeName = typeof type === 'string' ? type : type.name;
+        
+        return this.components.filter(component => 
+            component.constructor.name === typeName
+        );
     }
     
     /**
-     * Çocuk ekler
-     * @param {GameObject} child - Eklenecek çocuk
+     * Alt nesne ekler
+     * @param {GameObject} child - Eklenecek alt nesne
      */
     addChild(child) {
         if (!(child instanceof GameObject)) {
@@ -154,52 +170,190 @@ class GameObject {
             return;
         }
         
-        // Önceki ebeveynden kaldır
+        // Kendi kendine alt nesne olamaz
+        if (child === this) {
+            console.error("Bir GameObject kendisinin alt nesnesi olamaz");
+            return;
+        }
+        
+        // Döngüsel bağımlılık kontrolü
+        if (this.isChildOf(child)) {
+            console.error("Döngüsel bağımlılık: Bir GameObject kendi atasının alt nesnesi olamaz");
+            return;
+        }
+        
+        // Mevcut ebeveynden kaldır
         if (child.parent) {
             child.parent.removeChild(child);
         }
         
-        // Ebeveyn-çocuk ilişkisini kur
-        child.parent = this;
+        // Alt nesneyi ekle
         this.children.push(child);
+        child.parent = this;
         
-        // Sahneyi çocuğa bildir
+        // Transform'u güncelle
+        child.transform.setParent(this.transform);
+        
+        // Sahne referansını güncelle
         if (this.scene) {
             child.setScene(this.scene);
         }
     }
     
     /**
-     * Çocuk kaldırır
-     * @param {GameObject} child - Kaldırılacak çocuk
+     * Alt nesne kaldırır
+     * @param {GameObject} child - Kaldırılacak alt nesne
      */
     removeChild(child) {
         const index = this.children.indexOf(child);
+        
         if (index !== -1) {
-            child.parent = null;
+            // Alt nesneyi kaldır
             this.children.splice(index, 1);
+            
+            // Bağlantıları temizle
+            child.parent = null;
+            child.transform.setParent(null);
+            
+            // Sahne referansını güncelle
+            child.setScene(null);
         }
     }
     
     /**
-     * Sahneyi ayarlar (iç kullanım için)
+     * Tüm alt nesneleri kaldırır
+     */
+    removeAllChildren() {
+        // Her bir alt nesneyi kaldır
+        while (this.children.length > 0) {
+            this.removeChild(this.children[0]);
+        }
+    }
+    
+    /**
+     * Verilen nesnenin alt nesnesi mi kontrol eder
+     * @param {GameObject} parent - Kontrol edilecek üst nesne
+     * @return {Boolean} Alt nesne mi
+     */
+    isChildOf(parent) {
+        let current = this.parent;
+        
+        while (current) {
+            if (current === parent) {
+                return true;
+            }
+            current = current.parent;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Aktiflik durumunu değiştirir
+     * @param {Boolean} active - Aktif mi
+     */
+    setActive(active) {
+        this.active = active;
+        
+        // Alt nesneleri de güncelle
+        for (const child of this.children) {
+            child.setActive(active);
+        }
+    }
+    
+    /**
+     * Sahne referansını ayarlar (Editor tarafından kullanılır)
      * @param {Scene} scene - Sahne referansı
      */
     setScene(scene) {
         this.scene = scene;
         
-        // Tüm çocuklara sahneyi bildir
+        // Tüm bileşenlere sahne referansını bildir
+        for (const component of this.components) {
+            component.scene = scene;
+        }
+        
+        // Alt nesnelere de bildir
         for (const child of this.children) {
             child.setScene(scene);
         }
     }
     
     /**
-     * Nesneyi etkinleştirir/devre dışı bırakır
-     * @param {Boolean} value - Etkin olup olmadığı
+     * Objeyi klonlar
+     * @param {Boolean} recursive - Alt nesneleri de klonla
+     * @return {GameObject} Klonlanan nesne
      */
-    setActive(value) {
-        this.active = value;
+    clone(recursive = true) {
+        // Yeni nesne oluştur
+        const clone = new GameObject(this.name + " (Clone)");
+        clone.tag = this.tag;
+        clone.layer = this.layer;
+        clone.active = this.active;
+        
+        // Transform'u kopyala
+        clone.transform.position.x = this.transform.position.x;
+        clone.transform.position.y = this.transform.position.y;
+        clone.transform.rotation = this.transform.rotation;
+        clone.transform.scale.x = this.transform.scale.x;
+        clone.transform.scale.y = this.transform.scale.y;
+        
+        // Transform dışındaki bileşenleri kopyala
+        for (const component of this.components) {
+            if (component !== this.transform && component.clone) {
+                const componentClone = component.clone();
+                clone.addComponent(componentClone);
+            }
+        }
+        
+        // Alt nesneleri kopyala
+        if (recursive) {
+            for (const child of this.children) {
+                const childClone = child.clone(true);
+                clone.addChild(childClone);
+            }
+        }
+        
+        return clone;
+    }
+    
+    /**
+     * Nesneyi yok eder
+     */
+    destroy() {
+        // Sahneyi bildir
+        if (this.scene) {
+            this.scene.removeGameObject(this);
+        }
+        
+        // Üst nesneden kaldır
+        if (this.parent) {
+            this.parent.removeChild(this);
+        }
+        
+        // Alt nesneleri yok et
+        for (const child of [...this.children]) {
+            child.destroy();
+        }
+        
+        // Tüm bileşenleri yok et
+        for (const component of [...this.components]) {
+            if (component !== this.transform) {
+                this.removeComponent(component);
+            }
+        }
+        
+        // Transform bileşenini yok et
+        if (this.transform.onDestroy) {
+            this.transform.onDestroy();
+        }
+        
+        // Referansları temizle
+        this.transform = null;
+        this.components = [];
+        this.children = [];
+        this.parent = null;
+        this.scene = null;
     }
     
     /**
