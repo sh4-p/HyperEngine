@@ -1,0 +1,1516 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyperEngine Editor</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: #f5f5f5;
+            overflow: hidden;
+        }
+        
+        #editor-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+        }
+        
+        .editor-toolbar {
+            width: 100%;
+            height: 40px;
+            background-color: #2d2d2d;
+            border-bottom: 1px solid #3d3d3d;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+        }
+        
+        .toolbar-group {
+            display: flex;
+            margin-right: 15px;
+            padding-right: 15px;
+            border-right: 1px solid #3d3d3d;
+        }
+        
+        .toolbar-button {
+            background: transparent;
+            border: none;
+            color: #f5f5f5;
+            font-size: 14px;
+            padding: 5px 10px;
+            cursor: pointer;
+            margin: 0 2px;
+            border-radius: 3px;
+        }
+        
+        .toolbar-button:hover {
+            background-color: #3d3d3d;
+        }
+        
+        .toolbar-button.active {
+            background-color: #4d4d4d;
+        }
+        
+        .toolbar-button.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .editor-content {
+            display: flex;
+            height: calc(100% - 65px);
+            position: relative;
+        }
+        
+        .editor-panel {
+            background-color: #2d2d2d;
+            border: 1px solid #3d3d3d;
+            margin: 5px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+        }
+        
+        .editor-project-manager {
+            width: 200px;
+            height: 100%;
+            overflow: auto;
+        }
+        
+        .editor-scene-view {
+            flex-grow: 2;
+            position: relative;
+        }
+        
+        .editor-game-view {
+            flex-grow: 1;
+            position: relative;
+        }
+        
+        .editor-inspector {
+            width: 240px;
+            height: 100%;
+            overflow: auto;
+        }
+        
+        .editor-status-bar {
+            height: 25px;
+            background-color: #2d2d2d;
+            border-top: 1px solid #3d3d3d;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="editor-container"></div>
+    
+    <!-- Önce gerekli bağımlılıkları tanımlayalım -->
+    <script>
+        // Eksik sınıfları simüle ediyoruz
+        class Component {
+            constructor() {
+                this.active = true;
+                this.gameObject = null;
+                this.transform = null;
+                this.scene = null;
+                this.enabled = true;
+            }
+            
+            start() {}
+            update(deltaTime) {}
+            render(renderer) {}
+            onDestroy() {}
+            setActive(active) { this.active = active; }
+            
+            clone() {
+                return new this.constructor();
+            }
+        }
+        
+        class Transform extends Component {
+            constructor() {
+                super();
+                this.position = { x: 0, y: 0 };
+                this.rotation = 0;
+                this.scale = { x: 1, y: 1 };
+                this.parent = null;
+                this.children = [];
+            }
+            
+            setParent(parent) {
+                this.parent = parent;
+            }
+            
+            setPosition(x, y) {
+                this.position.x = x;
+                this.position.y = y;
+            }
+            
+            setRotation(rotation) {
+                this.rotation = rotation;
+            }
+            
+            setScale(x, y) {
+                this.scale.x = x;
+                this.scale.y = y || x;
+            }
+            
+            getWorldPosition() {
+                return { x: this.position.x, y: this.position.y };
+            }
+            
+            getWorldRotation() {
+                return this.rotation;
+            }
+            
+            getWorldScale() {
+                return { x: this.scale.x, y: this.scale.y };
+            }
+        }
+        
+        class GameObject {
+            constructor(name = "GameObject") {
+                this.id = GameObject._generateId();
+                this.name = name;
+                this.tag = "";
+                this.layer = 0;
+                this.active = true;
+                this.components = [];
+                this.transform = new Transform();
+                this.addComponent(this.transform);
+                this.parent = null;
+                this.children = [];
+                this.scene = null;
+            }
+            
+            update(deltaTime) {}
+            render(renderer) {}
+            
+            addComponent(component) {
+                if (component) {
+                    this.components.push(component);
+                    component.gameObject = this;
+                    component.transform = this.transform;
+                }
+                return component;
+            }
+            
+            removeComponent(component) {
+                const index = this.components.indexOf(component);
+                if (index !== -1) {
+                    this.components.splice(index, 1);
+                    component.gameObject = null;
+                    component.transform = null;
+                }
+            }
+            
+            getComponent(type) {
+                for (const component of this.components) {
+                    if (component instanceof type || component.constructor.name === type) {
+                        return component;
+                    }
+                }
+                return null;
+            }
+            
+            setScene(scene) {
+                this.scene = scene;
+                for (const component of this.components) {
+                    component.scene = scene;
+                }
+            }
+            
+            static _generateId() {
+                return 'go_' + Math.random().toString(36).substr(2, 9);
+            }
+        }
+        
+        class Scene {
+            constructor(name = "Scene") {
+                this.name = name;
+                this.active = false;
+                this.loaded = false;
+                this.gameObjects = [];
+                this.gameObjectsById = {};
+                this.gameObjectsByTag = {};
+                this.ui = null;
+            }
+            
+            load() {
+                this.loaded = true;
+            }
+            
+            start() {
+                this.active = true;
+            }
+            
+            stop() {
+                this.active = false;
+            }
+            
+            update(deltaTime) {}
+            
+            render(renderer) {}
+            
+            addGameObject(gameObject) {
+                this.gameObjects.push(gameObject);
+                this.gameObjectsById[gameObject.id] = gameObject;
+                gameObject.setScene(this);
+                return gameObject;
+            }
+            
+            removeGameObject(gameObject) {
+                const index = this.gameObjects.indexOf(gameObject);
+                if (index !== -1) {
+                    this.gameObjects.splice(index, 1);
+                    delete this.gameObjectsById[gameObject.id];
+                    gameObject.setScene(null);
+                }
+            }
+            
+            findGameObjectById(id) {
+                return this.gameObjectsById[id] || null;
+            }
+        }
+        
+        class UIManager {
+            constructor(scene) {
+                this.scene = scene;
+                this.components = [];
+            }
+            
+            update(deltaTime) {}
+            render(renderer) {}
+        }
+        
+        class SceneManager {
+            constructor() {
+                this.scenes = {};
+                this.activeScene = null;
+            }
+            
+            addScene(name, scene) {
+                this.scenes[name] = scene;
+            }
+            
+            loadScene(name) {
+                const scene = this.scenes[name];
+                if (scene) {
+                    if (this.activeScene) {
+                        this.activeScene.stop();
+                    }
+                    this.activeScene = scene;
+                    scene.start();
+                }
+            }
+            
+            static getInstance() {
+                if (!SceneManager.instance) {
+                    SceneManager.instance = new SceneManager();
+                }
+                return SceneManager.instance;
+            }
+        }
+        
+        class AssetManager {
+            constructor() {
+                this.images = {};
+                this.audio = {};
+                this.data = {};
+                this.loading = false;
+                this.queue = [];
+                this.loaded = 0;
+                this.total = 0;
+                this.onProgress = null;
+                this.onComplete = null;
+                this.onError = null;
+            }
+            
+            getImage(key) { return this.images[key]; }
+            getAudio(key) { return this.audio[key]; }
+            getData(key) { return this.data[key]; }
+            
+            queueImage(key, url) { 
+                this.queue.push({type: 'image', key, url });
+                this.total++;
+            }
+            
+            queueAudio(key, url) { 
+                this.queue.push({type: 'audio', key, url });
+                this.total++;
+            }
+            
+            queueJSON(key, url) { 
+                this.queue.push({type: 'json', key, url });
+                this.total++;
+            }
+            
+            startLoading() {
+                this.loading = true;
+                // Simüle edilmiş yükleme
+                setTimeout(() => {
+                    if (this.onComplete) {
+                        this.onComplete();
+                    }
+                    this.loading = false;
+                }, 1000);
+            }
+            
+            static getInstance() {
+                if (!AssetManager.instance) {
+                    AssetManager.instance = new AssetManager();
+                }
+                return AssetManager.instance;
+            }
+        }
+        
+        class Time {
+            constructor() {
+                this.deltaTime = 0;
+                this.lastTime = 0;
+                this.fps = 0;
+            }
+            
+            start() {
+                this.lastTime = performance.now() / 1000;
+            }
+            
+            update() {
+                const currentTime = performance.now() / 1000;
+                this.deltaTime = currentTime - this.lastTime;
+                this.lastTime = currentTime;
+            }
+            
+            static getInstance() {
+                if (!Time.instance) {
+                    Time.instance = new Time();
+                }
+                return Time.instance;
+            }
+        }
+        
+        class Input {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.keys = {};
+                this.mousePosition = { x: 0, y: 0 };
+                this.mouseButtons = {};
+                this.touches = {};
+                this.touchStarted = false;
+                this.touchMoved = false;
+                this.touchEnded = false;
+            }
+            
+            update() {}
+            isKeyDown(key) { return this.keys[key] === true; }
+            isMouseButtonDown(button) { return this.mouseButtons[button] === true; }
+            getMousePosition() { return this.mousePosition; }
+            
+            static getInstance() {
+                if (!Input.instance) {
+                    Input.instance = new Input();
+                }
+                return Input.instance;
+            }
+        }
+        
+        class Renderer {
+            constructor(canvas, context) {
+                this.canvas = canvas;
+                this.context = context;
+                this.clearColor = '#000000';
+            }
+            
+            clear() {
+                if (this.context) {
+                    this.context.fillStyle = this.clearColor;
+                    this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
+            }
+            
+            static getInstance() {
+                if (!Renderer.instance) {
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    Renderer.instance = new Renderer(canvas, context);
+                }
+                return Renderer.instance;
+            }
+        }
+        
+        class Physics {
+            constructor() {
+                this.gravity = { x: 0, y: 9.8 };
+            }
+            
+            update(deltaTime) {}
+            
+            static getInstance() {
+                if (!Physics.instance) {
+                    Physics.instance = new Physics();
+                }
+                return Physics.instance;
+            }
+        }
+        
+        class Audio {
+            constructor() {
+                this.musicVolume = 0.5;
+                this.soundVolume = 1.0;
+                this.muted = false;
+            }
+            
+            setMusicVolume(volume) { this.musicVolume = volume; }
+            setSoundVolume(volume) { this.soundVolume = volume; }
+            setMuted(muted) { this.muted = muted; }
+            resume() {}
+            
+            static getInstance() {
+                if (!Audio.instance) {
+                    Audio.instance = new Audio();
+                }
+                return Audio.instance;
+            }
+        }
+        
+        // Eksik bileşenler (Inspector.js için)
+        class Collider extends Component {
+            constructor() {
+                super();
+                this.type = 'box';
+                this.width = 64;
+                this.height = 64;
+                this.radius = 32;
+                this.offset = { x: 0, y: 0 };
+                this.isTrigger = false;
+                this.layer = 0;
+            }
+        }
+        
+        class Rigidbody extends Component {
+            constructor() {
+                super();
+                this.mass = 1;
+                this.drag = 0.1;
+                this.angularDrag = 0.05;
+                this.useGravity = true;
+                this.isKinematic = false;
+                this.freezeRotation = false;
+                this.bounciness = 0.5;
+            }
+        }
+        
+        class SpriteRenderer extends Component {
+            constructor() {
+                super();
+                this.sprite = null;
+                this.color = '#ffffff';
+                this.flipX = false;
+                this.flipY = false;
+                this.layer = 0;
+            }
+        }
+        
+        class AudioSource extends Component {
+            constructor() {
+                super();
+                this.clip = null;
+                this.volume = 1;
+                this.pitch = 1;
+                this.loop = false;
+                this.playOnAwake = true;
+            }
+        }
+        
+        class Animator extends Component {
+            constructor() {
+                super();
+                this.controller = null;
+                this.currentState = null;
+                this.speed = 1;
+            }
+        }
+        
+        // Editör sınıfları
+        class Toolbar {
+            constructor(options) {
+                this.container = options.container;
+                this.editor = options.editor;
+                this.eventListeners = {};
+                this._createUI();
+            }
+            
+            _createUI() {
+                if (!this.container) return;
+                
+                this.container.classList.add('editor-toolbar');
+                this.container.innerHTML = `
+                    <div class="toolbar-group">
+                        <button class="toolbar-button" data-action="newProject" title="Yeni Proje">📄</button>
+                        <button class="toolbar-button" data-action="openProject" title="Proje Aç">📂</button>
+                        <button class="toolbar-button" data-action="saveProject" title="Projeyi Kaydet">💾</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="toolbar-button" data-action="undo" title="Geri Al">↩️</button>
+                        <button class="toolbar-button" data-action="redo" title="Yinele">↪️</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="toolbar-button" data-action="play" title="Oynat">▶️</button>
+                        <button class="toolbar-button" data-action="pause" title="Duraklat">⏸️</button>
+                        <button class="toolbar-button" data-action="stop" title="Durdur">⏹️</button>
+                    </div>
+                `;
+                
+                // Olayları bağla
+                const buttons = this.container.querySelectorAll('.toolbar-button');
+                buttons.forEach(button => {
+                    const action = button.getAttribute('data-action');
+                    button.addEventListener('click', () => {
+                        this._emit(action);
+                    });
+                });
+            }
+            
+            on(event, callback) {
+                if (!this.eventListeners[event]) {
+                    this.eventListeners[event] = [];
+                }
+                this.eventListeners[event].push(callback);
+            }
+            
+            _emit(event, ...args) {
+                if (!this.eventListeners[event]) return;
+                
+                for (const callback of this.eventListeners[event]) {
+                    callback(...args);
+                }
+            }
+            
+            update(state = {}) {
+                // Butonları güncelleyebiliriz
+            }
+        }
+        
+        class Inspector {
+            constructor(options) {
+                this.container = options.container;
+                this.editor = options.editor;
+                this.selectedObject = null;
+                this._createUI();
+            }
+            
+            _createUI() {
+                if (!this.container) return;
+                
+                this.container.innerHTML = `
+                    <div class="inspector-header">Inspector</div>
+                    <div class="inspector-content">
+                        <div class="inspector-no-selection">Hiçbir nesne seçilmedi</div>
+                    </div>
+                `;
+            }
+            
+            inspectObject(object) {
+                this.selectedObject = object;
+                
+                if (!object) {
+                    this.clearInspector();
+                    return;
+                }
+                
+                const content = this.container.querySelector('.inspector-content');
+                
+                content.innerHTML = `
+                    <div class="inspector-object">
+                        <div class="inspector-section">GameObject</div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Name:</span>
+                            <input type="text" value="${object.name}" class="inspector-input">
+                        </div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Tag:</span>
+                            <input type="text" value="${object.tag}" class="inspector-input">
+                        </div>
+                        <div class="inspector-section">Transform</div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Position X:</span>
+                            <input type="number" value="${object.transform.position.x}" class="inspector-input">
+                        </div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Position Y:</span>
+                            <input type="number" value="${object.transform.position.y}" class="inspector-input">
+                        </div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Rotation:</span>
+                            <input type="number" value="${object.transform.rotation}" class="inspector-input">
+                        </div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Scale X:</span>
+                            <input type="number" value="${object.transform.scale.x}" class="inspector-input">
+                        </div>
+                        <div class="inspector-field">
+                            <span class="inspector-label">Scale Y:</span>
+                            <input type="number" value="${object.transform.scale.y}" class="inspector-input">
+                        </div>
+                    </div>
+                `;
+            }
+            
+            clearInspector() {
+                this.selectedObject = null;
+                
+                const content = this.container.querySelector('.inspector-content');
+                content.innerHTML = '<div class="inspector-no-selection">Hiçbir nesne seçilmedi</div>';
+            }
+        }
+        
+        class ProjectManager {
+            constructor(options) {
+                this.container = options.container;
+                this.editor = options.editor;
+                this._createUI();
+            }
+            
+            _createUI() {
+                if (!this.container) return;
+                
+                this.container.innerHTML = `
+                    <div class="project-header">Project</div>
+                    <div class="project-content">
+                        <div class="project-folder">
+                            <div class="project-folder-name">Scenes</div>
+                            <div class="project-folder-content">
+                                <div class="project-file">MainScene</div>
+                                <div class="project-file">GameScene</div>
+                            </div>
+                        </div>
+                        <div class="project-folder">
+                            <div class="project-folder-name">Assets</div>
+                            <div class="project-folder-content">
+                                <div class="project-folder">
+                                    <div class="project-folder-name">Images</div>
+                                </div>
+                                <div class="project-folder">
+                                    <div class="project-folder-name">Audio</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        class SceneEditor {
+            constructor(options) {
+                this.container = options.container;
+                this.editor = options.editor;
+                this.width = options.width || 800;
+                this.height = options.height || 600;
+                this.activeScene = null;
+                this.selectedObjects = [];
+                this._createUI();
+            }
+            
+            _createUI() {
+                if (!this.container) return;
+                
+                // Canvas oluştur
+                this.canvas = document.createElement('canvas');
+                this.canvas.width = this.width;
+                this.canvas.height = this.height;
+                this.canvas.className = 'scene-editor-canvas';
+                this.container.appendChild(this.canvas);
+                
+                this.context = this.canvas.getContext('2d');
+                
+                // Olayları ekle
+                this.canvas.addEventListener('click', (e) => {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    // Örnek nesne oluştur
+                    const obj = new GameObject("New Object");
+                    obj.transform.position.x = x;
+                    obj.transform.position.y = y;
+                    
+                    if (this.activeScene) {
+                        this.activeScene.addGameObject(obj);
+                    }
+                    
+                    // Nesneyi seç
+                    this.selectObject(obj.id);
+                    
+                    this._render();
+                });
+            }
+            
+            loadScene(sceneName) {
+                // Örnek sahne oluştur
+                this.activeScene = new Scene(sceneName);
+                this._render();
+            }
+            
+            play() {
+                console.log("Play");
+            }
+            
+            pause() {
+                console.log("Pause");
+            }
+            
+            stop() {
+                console.log("Stop");
+            }
+            
+            selectObject(objectId, addToSelection = false) {
+                if (!this.activeScene) return;
+                
+                if (!addToSelection) {
+                    this.selectedObjects = [];
+                }
+                
+                const obj = this.activeScene.findGameObjectById(objectId);
+                if (obj) {
+                    this.selectedObjects.push(obj);
+                    
+                    // Inspector'a bildir
+                    if (this.editor && this.editor.inspector) {
+                        this.editor.inspector.inspectObject(obj);
+                    }
+                }
+                
+                this._render();
+            }
+            
+            clearSelection() {
+                this.selectedObjects = [];
+                
+                // Inspector'a bildir
+                if (this.editor && this.editor.inspector) {
+                    this.editor.inspector.clearInspector();
+                }
+                
+                this._render();
+            }
+            
+            addObject(obj) {
+                if (this.activeScene) {
+                    this.activeScene.addGameObject(obj);
+                    this._render();
+                    return obj;
+                }
+                return null;
+            }
+            
+            removeObject(objectId) {
+                if (!this.activeScene) return;
+                
+                const obj = this.activeScene.findGameObjectById(objectId);
+                if (obj) {
+                    this.activeScene.removeGameObject(obj);
+                    
+                    // Seçimden kaldır
+                    const index = this.selectedObjects.indexOf(obj);
+                    if (index !== -1) {
+                        this.selectedObjects.splice(index, 1);
+                    }
+                    
+                    this._render();
+                }
+            }
+            
+            getObjectById(objectId) {
+                if (!this.activeScene) return null;
+                return this.activeScene.findGameObjectById(objectId);
+            }
+            
+            resize() {
+                this.canvas.width = this.container.clientWidth;
+                this.canvas.height = this.container.clientHeight;
+                this._render();
+            }
+            
+            _render() {
+                if (!this.context) return;
+                
+                // Temizle
+                this.context.fillStyle = '#1e1e1e';
+                this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Izgara çiz
+                this._drawGrid();
+                
+                // Nesneleri çiz
+                if (this.activeScene) {
+                    for (const obj of this.activeScene.gameObjects) {
+                        this._drawGameObject(obj);
+                    }
+                }
+                
+                // Seçili nesneleri belirt
+                for (const obj of this.selectedObjects) {
+                    this._drawSelectionOutline(obj);
+                }
+            }
+            
+            _drawGrid() {
+                const gridSize = 20;
+                
+                this.context.strokeStyle = 'rgba(100, 100, 100, 0.3)';
+                this.context.lineWidth = 1;
+                
+                // Yatay çizgiler
+                for (let y = 0; y < this.canvas.height; y += gridSize) {
+                    this.context.beginPath();
+                    this.context.moveTo(0, y);
+                    this.context.lineTo(this.canvas.width, y);
+                    this.context.stroke();
+                }
+                
+                // Dikey çizgiler
+                for (let x = 0; x < this.canvas.width; x += gridSize) {
+                    this.context.beginPath();
+                    this.context.moveTo(x, 0);
+                    this.context.lineTo(x, this.canvas.height);
+                    this.context.stroke();
+                }
+            }
+            
+            _drawGameObject(obj) {
+                const pos = obj.transform.position;
+                
+                // Kare çiz
+                this.context.fillStyle = '#3498db';
+                this.context.fillRect(pos.x - 25, pos.y - 25, 50, 50);
+                
+                // İsmi yaz
+                this.context.fillStyle = '#ffffff';
+                this.context.font = '12px Arial';
+                this.context.textAlign = 'center';
+                this.context.fillText(obj.name, pos.x, pos.y - 35);
+            }
+            
+            _drawSelectionOutline(obj) {
+                const pos = obj.transform.position;
+                
+                this.context.strokeStyle = '#f39c12';
+                this.context.lineWidth = 2;
+                this.context.strokeRect(pos.x - 27, pos.y - 27, 54, 54);
+            }
+        }
+        
+        class EditorAssetBrowser {
+            constructor(options) {
+                this.container = options.container;
+                this.editor = options.editor;
+                this.assetRoot = options.assetRoot || 'Assets/';
+                this._createUI();
+            }
+            
+            _createUI() {
+                if (!this.container) return;
+                
+                this.container.innerHTML += `
+                    <div class="asset-browser-header">Assets</div>
+                    <div class="asset-browser-content">
+                        <div class="asset-browser-folder">
+                            <div class="asset-browser-folder-name">Images</div>
+                            <div class="asset-browser-folder-content">
+                                <div class="asset-browser-file">player.png</div>
+                                <div class="asset-browser-file">enemy.png</div>
+                            </div>
+                        </div>
+                        <div class="asset-browser-folder">
+                            <div class="asset-browser-folder-name">Audio</div>
+                            <div class="asset-browser-folder-content">
+                                <div class="asset-browser-file">music.mp3</div>
+                                <div class="asset-browser-file">explosion.wav</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            on(event, callback) {
+                // Olay dinleyicisi ekle
+            }
+            
+            filter(type) {
+                // Tiplerine göre filtrele
+            }
+            
+            show() {
+                // AssetBrowser'ı göster
+            }
+        }
+        
+        class Engine {
+            constructor(config) {
+                this.config = config;
+                this.canvas = document.getElementById(config.canvasId);
+                this.context = this.canvas ? this.canvas.getContext('2d') : null;
+                this.isRunning = false;
+                this.systems = {};
+                
+                // Temel sistemleri oluştur
+                this.time = Time.getInstance();
+                this.input = Input.getInstance();
+                this.renderer = Renderer.getInstance();
+                this.physics = Physics.getInstance();
+                this.sceneManager = SceneManager.getInstance();
+                
+                // Sistemleri kaydet
+                this.systems.time = this.time;
+                this.systems.input = this.input;
+                this.systems.renderer = this.renderer;
+                this.systems.physics = this.physics;
+                this.systems.sceneManager = this.sceneManager;
+            }
+            
+            start() {
+                this.isRunning = true;
+                this.time.start();
+                this.gameLoop();
+            }
+            
+            stop() {
+                this.isRunning = false;
+            }
+            
+            gameLoop() {
+                if (!this.isRunning) return;
+                
+                this.time.update();
+                this.input.update();
+                
+                // Aktif sahneyi güncelle
+                if (this.sceneManager.activeScene) {
+                    this.sceneManager.activeScene.update(this.time.deltaTime);
+                }
+                
+                this.physics.update(this.time.deltaTime);
+                
+                // Render işlemleri
+                this.renderer.clear();
+                
+                if (this.sceneManager.activeScene) {
+                    this.sceneManager.activeScene.render(this.renderer);
+                }
+                
+                // Bir sonraki kareyi planla
+                requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            static getInstance() {
+                if (!Engine.instance) {
+                    Engine.instance = new Engine({
+                        canvasId: 'game-canvas',
+                        width: 800,
+                        height: 600
+                    });
+                }
+                return Engine.instance;
+            }
+        }
+        
+        class Game {
+            constructor(config) {
+                this.config = config;
+                this.engine = Engine.getInstance();
+                this.sceneManager = SceneManager.getInstance();
+                this.assetManager = AssetManager.getInstance();
+                this.isRunning = false;
+                this.isPaused = false;
+            }
+            
+            addScene(name, scene) {
+                this.sceneManager.addScene(name, scene);
+            }
+            
+            loadResources(resources, startOnLoad = false) {
+                for (const resource of resources) {
+                    if (resource.type === 'image') {
+                        this.assetManager.queueImage(resource.key, resource.url);
+                    } else if (resource.type === 'audio') {
+                        this.assetManager.queueAudio(resource.key, resource.url);
+                    } else if (resource.type === 'json') {
+                        this.assetManager.queueJSON(resource.key, resource.url);
+                    }
+                }
+                
+                this.assetManager.startLoading();
+            }
+            
+            start() {
+                this.engine.start();
+                this.isRunning = true;
+                
+                if (this.config.firstScene) {
+                    this.sceneManager.loadScene(this.config.firstScene);
+                }
+            }
+        }
+        
+        // Singleton nesneleri
+        SceneManager.instance = null;
+        AssetManager.instance = null;
+        Time.instance = null;
+        Input.instance = null;
+        Renderer.instance = null;
+        Physics.instance = null;
+        Engine.instance = null;
+    </script>
+    
+    <!-- Editör Bileşenleri -->
+    <script>
+        // EditorMain sınıfı
+        class EditorMain {
+            constructor(config = {}) {
+                // Yapılandırma
+                this.config = Object.assign({
+                    containerId: 'editor-container',
+                    width: 1280,
+                    height: 720,
+                    theme: 'dark',
+                    showToolbar: true,
+                    showInspector: true,
+                    showProjectManager: true,
+                    showSceneView: true,
+                    showGameView: true,
+                    snapToGrid: true,
+                    gridSize: 16
+                }, config);
+                
+                // Editor bileşenleri
+                this.toolbar = null;
+                this.inspector = null;
+                this.projectManager = null;
+                this.sceneEditor = null;
+                this.assetBrowser = null;
+                
+                // Proje bilgileri
+                this.currentProject = null;
+                this.currentScene = null;
+                this.isProjectModified = false;
+                
+                // Geçmiş (Undo/Redo)
+                this.history = [];
+                this.historyIndex = -1;
+                
+                // Seçim
+                this.selectedObjects = [];
+                
+                // DOM elementleri
+                this.container = null;
+                this.editorElements = {};
+                
+                // Editor durumu
+                this.isRunning = false;
+                this.editMode = 'select';
+                
+                // Singleton instance
+                if (EditorMain.instance) {
+                    return EditorMain.instance;
+                }
+                EditorMain.instance = this;
+                
+                // Başlat
+                this._initialize();
+            }
+            
+            _initialize() {
+                // Ana konteyner
+                this.container = document.getElementById(this.config.containerId);
+                
+                if (!this.container) {
+                    console.error(`Editor container not found: #${this.config.containerId}`);
+                    return;
+                }
+                
+                // Ana düzen oluştur
+                this._createLayout();
+                
+                // Bileşenleri oluştur
+                this._createComponents();
+                
+                // Olay dinleyicileri
+                this._setupEventListeners();
+                
+                console.log("HyperGame Editor initialized!");
+            }
+            
+            _createLayout() {
+                // Ana konteyner stil ayarları
+                this.container.classList.add('editor-container');
+                this.container.style.width = `${this.config.width}px`;
+                this.container.style.height = `${this.config.height}px`;
+                this.container.style.position = 'relative';
+                this.container.style.overflow = 'hidden';
+                this.container.style.backgroundColor = this.config.theme === 'dark' ? '#1e1e1e' : '#f5f5f5';
+                
+                // Tema sınıfı
+                this.container.classList.add(`theme-${this.config.theme}`);
+                
+                // Araç çubuğu
+                if (this.config.showToolbar) {
+                    const toolbar = document.createElement('div');
+                    toolbar.id = 'editor-toolbar';
+                    toolbar.className = 'editor-toolbar';
+                    this.container.appendChild(toolbar);
+                    this.editorElements.toolbar = toolbar;
+                }
+                
+                // Ana içerik
+                const content = document.createElement('div');
+                content.id = 'editor-content';
+                content.className = 'editor-content';
+                this.container.appendChild(content);
+                this.editorElements.content = content;
+                
+                // Proje yöneticisi
+                if (this.config.showProjectManager) {
+                    const projectManager = document.createElement('div');
+                    projectManager.id = 'editor-project-manager';
+                    projectManager.className = 'editor-panel editor-project-manager';
+                    content.appendChild(projectManager);
+                    this.editorElements.projectManager = projectManager;
+                }
+                
+                // Sahne görünümü
+                if (this.config.showSceneView) {
+                    const sceneView = document.createElement('div');
+                    sceneView.id = 'editor-scene-view';
+                    sceneView.className = 'editor-panel editor-scene-view';
+                    content.appendChild(sceneView);
+                    this.editorElements.sceneView = sceneView;
+                }
+                
+                // Oyun görünümü
+                if (this.config.showGameView) {
+                    const gameView = document.createElement('div');
+                    gameView.id = 'editor-game-view';
+                    gameView.className = 'editor-panel editor-game-view';
+                    content.appendChild(gameView);
+                    this.editorElements.gameView = gameView;
+                }
+                
+                // Denetleyici (Inspector)
+                if (this.config.showInspector) {
+                    const inspector = document.createElement('div');
+                    inspector.id = 'editor-inspector';
+                    inspector.className = 'editor-panel editor-inspector';
+                    content.appendChild(inspector);
+                    this.editorElements.inspector = inspector;
+                }
+                
+                // Durum çubuğu
+                const statusBar = document.createElement('div');
+                statusBar.id = 'editor-status-bar';
+                statusBar.className = 'editor-status-bar';
+                this.container.appendChild(statusBar);
+                this.editorElements.statusBar = statusBar;
+            }
+            
+            _createComponents() {
+                // Araç çubuğu
+                if (this.config.showToolbar) {
+                    this.toolbar = new Toolbar({
+                        container: this.editorElements.toolbar,
+                        editor: this
+                    });
+                }
+                
+                // Denetleyici (Inspector)
+                if (this.config.showInspector) {
+                    this.inspector = new Inspector({
+                        container: this.editorElements.inspector,
+                        editor: this
+                    });
+                }
+                
+                // Proje yöneticisi
+                if (this.config.showProjectManager) {
+                    this.projectManager = new ProjectManager({
+                        container: this.editorElements.projectManager,
+                        editor: this
+                    });
+                }
+                
+                // Sahne editörü
+                if (this.config.showSceneView) {
+                    this.sceneEditor = new SceneEditor({
+                        container: this.editorElements.sceneView,
+                        editor: this,
+                        width: this.config.width * 0.6,
+                        height: this.config.height * 0.7
+                    });
+                }
+                
+                // Varlık tarayıcısı
+                this.assetBrowser = new EditorAssetBrowser({
+                    container: this.editorElements.projectManager,
+                    assetRoot: 'Assets/',
+                    editor: this
+                });
+            }
+            
+            _setupEventListeners() {
+                // Pencere olay dinleyicileri
+                window.addEventListener('resize', () => this._handleResize());
+                
+                // Kısayol tuşları
+                document.addEventListener('keydown', (e) => this._handleKeyDown(e));
+                
+                // Araç çubuğu olayları
+                if (this.toolbar) {
+                    this.toolbar.on('newProject', () => this.newProject());
+                    this.toolbar.on('openProject', () => this.openProject());
+                    this.toolbar.on('saveProject', () => this.saveProject());
+                    this.toolbar.on('play', () => this.playGame());
+                    this.toolbar.on('pause', () => this.pauseGame());
+                    this.toolbar.on('stop', () => this.stopGame());
+                }
+            }
+            
+            _handleResize() {
+                // Bileşenlerin boyutlarını güncelle
+                if (this.sceneEditor) {
+                    this.sceneEditor.resize();
+                }
+            }
+            
+            _handleKeyDown(e) {
+                // Kısayol tuşları
+            }
+            
+            newProject() {
+                const projectName = prompt('Proje adı:', 'YeniProje');
+                if (!projectName) return;
+                
+                this.currentProject = {
+                    name: projectName,
+                    createdAt: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    scenes: [],
+                    assets: []
+                };
+                
+                // Varsayılan sahne oluştur
+                this.createNewScene('MainScene');
+                
+                this._updateUI();
+                
+                console.log(`New project created: ${projectName}`);
+            }
+            
+            openProject() {
+                // Simüle edilmiş proje açma
+                const projectName = prompt('Açılacak proje adı:', 'MevcutProje');
+                if (!projectName) return;
+                
+                this.currentProject = {
+                    name: projectName,
+                    createdAt: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    scenes: ['MainScene', 'GameScene', 'SettingsScene'],
+                    assets: []
+                };
+                
+                // İlk sahneyi yükle
+                this.loadScene(this.currentProject.scenes[0]);
+                
+                this._updateUI();
+                
+                console.log(`Project loaded: ${projectName}`);
+            }
+            
+            saveProject() {
+                if (!this.currentProject) return;
+                
+                this.currentProject.lastModified = new Date().toISOString();
+                
+                this._updateUI();
+                
+                console.log(`Project saved: ${this.currentProject.name}`);
+            }
+            
+            createNewScene(sceneName) {
+                if (!this.currentProject) return;
+                
+                if (this.currentProject.scenes.includes(sceneName)) {
+                    alert(`"${sceneName}" adında bir sahne zaten mevcut.`);
+                    return;
+                }
+                
+                this.currentProject.scenes.push(sceneName);
+                
+                this.loadScene(sceneName);
+                
+                this._updateUI();
+                
+                console.log(`New scene created: ${sceneName}`);
+            }
+            
+            loadScene(sceneName) {
+                if (!this.currentProject) return;
+                
+                if (!this.currentProject.scenes.includes(sceneName)) {
+                    alert(`"${sceneName}" adında bir sahne bulunamadı.`);
+                    return;
+                }
+                
+                this.currentScene = sceneName;
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.loadScene(sceneName);
+                }
+                
+                this._updateUI();
+                
+                console.log(`Scene loaded: ${sceneName}`);
+            }
+            
+            playGame() {
+                if (!this.currentProject || !this.currentScene) return;
+                
+                this.isRunning = true;
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.play();
+                }
+                
+                this._updateUI();
+                
+                console.log('Game started');
+            }
+            
+            pauseGame() {
+                if (!this.isRunning) return;
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.pause();
+                }
+                
+                this._updateUI();
+                
+                console.log('Game paused');
+            }
+            
+            stopGame() {
+                if (!this.isRunning) return;
+                
+                this.isRunning = false;
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.stop();
+                }
+                
+                this._updateUI();
+                
+                console.log('Game stopped');
+            }
+            
+            addToHistory(action) {
+                this.history.push(action);
+                this.historyIndex = this.history.length - 1;
+                this.isProjectModified = true;
+            }
+            
+            clearSelection() {
+                this.selectedObjects = [];
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.clearSelection();
+                }
+                
+                this._updateUI();
+            }
+            
+            selectObject(object, addToSelection = false) {
+                if (!object) return;
+                
+                if (!addToSelection) {
+                    this.clearSelection();
+                }
+                
+                this.selectedObjects.push(object);
+                
+                if (this.sceneEditor) {
+                    this.sceneEditor.selectObject(object.id, true);
+                }
+                
+                this._updateUI();
+            }
+            
+            _updateUI() {
+                if (this.toolbar) {
+                    this.toolbar.update({
+                        projectName: this.currentProject ? this.currentProject.name : '',
+                        sceneName: this.currentScene || '',
+                        isProjectModified: this.isProjectModified,
+                        isRunning: this.isRunning,
+                        hasSelection: this.selectedObjects.length > 0,
+                        canUndo: this.historyIndex > 0,
+                        canRedo: this.historyIndex < this.history.length - 1
+                    });
+                }
+                
+                if (this.editorElements.statusBar) {
+                    const statusInfo = [];
+                    
+                    if (this.currentProject) {
+                        statusInfo.push(`Project: ${this.currentProject.name}`);
+                    }
+                    
+                    if (this.currentScene) {
+                        statusInfo.push(`Scene: ${this.currentScene}`);
+                    }
+                    
+                    if (this.selectedObjects.length > 0) {
+                        statusInfo.push(`Selected: ${this.selectedObjects.length} object(s)`);
+                    }
+                    
+                    this.editorElements.statusBar.textContent = statusInfo.join(' | ');
+                }
+            }
+            
+            static getInstance() {
+                if (!EditorMain.instance) {
+                    new EditorMain();
+                }
+                return EditorMain.instance;
+            }
+        }
+        
+        EditorMain.instance = null;
+    </script>
+    
+    <!-- Başlatma Kodu -->
+    <script>
+        // Sayfa yüklendiğinde editörü başlat
+        window.onload = function() {
+            try {
+                // Editörü başlat
+                const editor = new EditorMain({
+                    containerId: 'editor-container',
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                });
+                
+                console.log("HyperEngine Editor başlatıldı!");
+            } catch (error) {
+                console.error("Editör başlatılırken hata oluştu:", error);
+            }
+        };
+    </script>
+</body>
+</html>

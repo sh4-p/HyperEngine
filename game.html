@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyperEngine Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            height: 100%;
+            max-height: 960px;
+            background-color: #111;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        #game-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        #loading-screen {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #111;
+            z-index: 100;
+        }
+        
+        #loading-progress {
+            width: 80%;
+            height: 20px;
+            background-color: #222;
+            margin-top: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #3498db;
+            transition: width 0.3s ease-in-out;
+        }
+        
+        #loading-text {
+            color: #fff;
+            font-size: 18px;
+            margin-top: 10px;
+        }
+        
+        #title {
+            color: #fff;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        
+        <div id="loading-screen">
+            <div id="title">HyperEngine Demo</div>
+            <div id="loading-progress">
+                <div id="loading-bar"></div>
+            </div>
+            <div id="loading-text">Yükleniyor... 0%</div>
+        </div>
+    </div>
+    
+    <!-- Tüm sınıfları tek bir script bloğunda tanımlayalım -->
+    <script>
+        /**
+         * Temel motor sınıfları
+         */
+        class Component {
+            constructor() {
+                this.active = true;
+                this.gameObject = null;
+                this.transform = null;
+                this.scene = null;
+                this.enabled = true;
+            }
+            
+            start() {}
+            update(deltaTime) {}
+            render(renderer) {}
+            onDestroy() {}
+            
+            setActive(active) {
+                this.active = active;
+            }
+            
+            clone() {
+                return new this.constructor();
+            }
+        }
+        
+        class Transform extends Component {
+            constructor() {
+                super();
+                this.position = { x: 0, y: 0 };
+                this.rotation = 0;
+                this.scale = { x: 1, y: 1 };
+                this.parent = null;
+                this.children = [];
+            }
+            
+            setParent(parent) {
+                this.parent = parent;
+                if (parent) {
+                    parent.children.push(this);
+                }
+            }
+            
+            getWorldPosition() {
+                return { x: this.position.x, y: this.position.y };
+            }
+            
+            getWorldRotation() {
+                return this.rotation;
+            }
+            
+            getWorldScale() {
+                return { x: this.scale.x, y: this.scale.y };
+            }
+        }
+        
+        class GameObject {
+            constructor(name = "GameObject") {
+                this.id = GameObject._generateId();
+                this.name = name;
+                this.tag = "";
+                this.layer = 0;
+                this.active = true;
+                this.components = [];
+                this.transform = new Transform();
+                this.addComponent(this.transform);
+                this.parent = null;
+                this.children = [];
+                this.scene = null;
+            }
+            
+            update(deltaTime) {
+                if (!this.active) return;
+                
+                for (const component of this.components) {
+                    if (component.active && component.update) {
+                        component.update(deltaTime);
+                    }
+                }
+                
+                for (const child of this.children) {
+                    child.update(deltaTime);
+                }
+            }
+            
+            render(renderer) {
+                if (!this.active) return;
+                
+                for (const component of this.components) {
+                    if (component.active && component.render) {
+                        component.render(renderer);
+                    }
+                }
+                
+                for (const child of this.children) {
+                    child.render(renderer);
+                }
+            }
+            
+            addComponent(component) {
+                if (this.components.includes(component)) {
+                    return component;
+                }
+                
+                this.components.push(component);
+                component.gameObject = this;
+                component.transform = this.transform;
+                
+                return component;
+            }
+            
+            removeComponent(component) {
+                if (component === this.transform) {
+                    return;
+                }
+                
+                const index = this.components.indexOf(component);
+                if (index !== -1) {
+                    this.components.splice(index, 1);
+                    component.gameObject = null;
+                    component.transform = null;
+                }
+            }
+            
+            getComponent(type) {
+                for (const component of this.components) {
+                    if (typeof type === 'string') {
+                        if (component.constructor.name === type) {
+                            return component;
+                        }
+                    } else if (component instanceof type) {
+                        return component;
+                    }
+                }
+                return null;
+            }
+            
+            addChild(child) {
+                if (child === this) return;
+                
+                this.children.push(child);
+                child.parent = this;
+                child.transform.setParent(this.transform);
+            }
+            
+            removeChild(child) {
+                const index = this.children.indexOf(child);
+                if (index !== -1) {
+                    this.children.splice(index, 1);
+                    child.parent = null;
+                    child.transform.setParent(null);
+                }
+            }
+            
+            setScene(scene) {
+                this.scene = scene;
+                
+                for (const component of this.components) {
+                    component.scene = scene;
+                }
+                
+                for (const child of this.children) {
+                    child.setScene(scene);
+                }
+            }
+            
+            static _generateId() {
+                return 'go_' + Math.random().toString(36).substr(2, 9);
+            }
+        }
+        
+        class Scene {
+            constructor(name = "Scene") {
+                this.name = name;
+                this.active = false;
+                this.loaded = false;
+                this.gameObjects = [];
+                this.gameObjectsById = {};
+                this.gameObjectsByTag = {};
+                this.ui = new UIManager(this);
+            }
+            
+            load() {
+                this.loaded = true;
+            }
+            
+            start() {
+                this.active = true;
+            }
+            
+            stop() {
+                this.active = false;
+            }
+            
+            update(deltaTime) {
+                if (!this.active) return;
+                
+                for (const gameObject of this.gameObjects) {
+                    if (gameObject.active) {
+                        gameObject.update(deltaTime);
+                    }
+                }
+                
+                this.ui.update(deltaTime);
+            }
+            
+            render(renderer) {
+                if (!this.active) return;
+                
+                for (const gameObject of this.gameObjects) {
+                    if (gameObject.active) {
+                        gameObject.render(renderer);
+                    }
+                }
+                
+                this.ui.render(renderer);
+            }
+            
+            addGameObject(gameObject) {
+                this.gameObjects.push(gameObject);
+                this.gameObjectsById[gameObject.id] = gameObject;
+                
+                if (gameObject.tag) {
+                    if (!this.gameObjectsByTag[gameObject.tag]) {
+                        this.gameObjectsByTag[gameObject.tag] = [];
+                    }
+                    this.gameObjectsByTag[gameObject.tag].push(gameObject);
+                }
+                
+                gameObject.setScene(this);
+                
+                return gameObject;
+            }
+            
+            removeGameObject(gameObject) {
+                const index = this.gameObjects.indexOf(gameObject);
+                if (index !== -1) {
+                    this.gameObjects.splice(index, 1);
+                    delete this.gameObjectsById[gameObject.id];
+                    
+                    if (gameObject.tag && this.gameObjectsByTag[gameObject.tag]) {
+                        const tagIndex = this.gameObjectsByTag[gameObject.tag].indexOf(gameObject);
+                        if (tagIndex !== -1) {
+                            this.gameObjectsByTag[gameObject.tag].splice(tagIndex, 1);
+                        }
+                    }
+                    
+                    gameObject.setScene(null);
+                }
+            }
+            
+            findGameObjectById(id) {
+                return this.gameObjectsById[id] || null;
+            }
+            
+            findGameObjectsByTag(tag) {
+                return this.gameObjectsByTag[tag] || [];
+            }
+        }
+        
+        class SceneManager {
+            constructor() {
+                this.scenes = {};
+                this.activeScene = null;
+                this.transitioning = false;
+                
+                // Singleton instance
+                if (SceneManager.instance) {
+                    return SceneManager.instance;
+                }
+                SceneManager.instance = this;
+            }
+            
+            addScene(name, scene) {
+                scene.name = name;
+                this.scenes[name] = scene;
+            }
+            
+            getScene(name) {
+                return this.scenes[name] || null;
+            }
+            
+            loadScene(name) {
+                const scene = this.getScene(name);
+                
+                if (!scene) {
+                    console.error(`Scene "${name}" not found`);
+                    return;
+                }
+                
+                if (this.activeScene) {
+                    this.activeScene.stop();
+                }
+                
+                this.activeScene = scene;
+                
+                if (!scene.loaded) {
+                    scene.load();
+                }
+                
+                scene.start();
+            }
+            
+            update(deltaTime) {
+                if (this.activeScene) {
+                    this.activeScene.update(deltaTime);
+                }
+            }
+            
+            render(renderer) {
+                if (this.activeScene) {
+                    this.activeScene.render(renderer);
+                }
+            }
+            
+            static getInstance() {
+                if (!SceneManager.instance) {
+                    new SceneManager();
+                }
+                return SceneManager.instance;
+            }
+        }
+        
+        // Singleton instance
+        SceneManager.instance = null;
+        
+        class AssetManager {
+            constructor() {
+                this.images = {};
+                this.audio = {};
+                this.data = {};
+                this.loading = false;
+                this.queue = [];
+                this.loaded = 0;
+                this.total = 0;
+                this.onProgress = null;
+                this.onComplete = null;
+                this.onError = null;
+                
+                // Singleton instance
+                if (AssetManager.instance) {
+                    return AssetManager.instance;
+                }
+                AssetManager.instance = this;
+            }
+            
+            getImage(key) {
+                return this.images[key] || null;
+            }
+            
+            getAudio(key) {
+                return this.audio[key] || null;
+            }
+            
+            getData(key) {
+                return this.data[key] || null;
+            }
+            
+            queueImage(key, url) {
+                this.queue.push({
+                    type: 'image',
+                    key: key,
+                    url: url
+                });
+                
+                this.total++;
+            }
+            
+            queueAudio(key, url) {
+                this.queue.push({
+                    type: 'audio',
+                    key: key,
+                    url: url
+                });
+                
+                this.total++;
+            }
+            
+            queueJSON(key, url) {
+                this.queue.push({
+                    type: 'json',
+                    key: key,
+                    url: url
+                });
+                
+                this.total++;
+            }
+            
+            startLoading() {
+                if (this.loading) return;
+                
+                this.loading = true;
+                this.loaded = 0;
+                
+                if (this.queue.length === 0) {
+                    this._onLoadComplete();
+                    return;
+                }
+                
+                for (const item of this.queue) {
+                    this._loadItem(item);
+                }
+            }
+            
+            _loadItem(item) {
+                switch (item.type) {
+                    case 'image':
+                        this._loadImage(item);
+                        break;
+                    case 'audio':
+                        this._loadAudio(item);
+                        break;
+                    case 'json':
+                        this._loadJSON(item);
+                        break;
+                }
+            }
+            
+            _loadImage(item) {
+                const img = new Image();
+                
+                img.onload = () => {
+                    this.images[item.key] = img;
+                    this._onItemLoaded();
+                };
+                
+                img.onerror = () => {
+                    console.error(`Error loading image: ${item.url}`);
+                    this._onItemLoaded();
+                };
+                
+                img.src = item.url;
+            }
+            
+            _loadAudio(item) {
+                const audio = new Audio();
+                
+                audio.addEventListener('canplaythrough', () => {
+                    this.audio[item.key] = audio;
+                    this._onItemLoaded();
+                }, { once: true });
+                
+                audio.addEventListener('error', () => {
+                    console.error(`Error loading audio: ${item.url}`);
+                    this._onItemLoaded();
+                }, { once: true });
+                
+                audio.src = item.url;
+                audio.load();
+            }
+            
+            _loadJSON(item) {
+                fetch(item.url)
+                    .then(response => response.json())
+                    .then(data => {
+                        this.data[item.key] = data;
+                        this._onItemLoaded();
+                    })
+                    .catch(error => {
+                        console.error(`Error loading JSON: ${item.url}`, error);
+                        this._onItemLoaded();
+                    });
+            }
+            
+            _onItemLoaded() {
+                this.loaded++;
+                
+                const progress = this.loaded / this.total;
+                
+                if (this.onProgress) {
+                    this.onProgress(progress, this.loaded, this.total);
+                }
+                
+                if (this.loaded >= this.total) {
+                    this._onLoadComplete();
+                }
+            }
+            
+            _onLoadComplete() {
+                this.loading = false;
+                this.queue = [];
+                
+                if (this.onComplete) {
+                    this.onComplete();
+                }
+            }
+            
+            static getInstance() {
+                if (!AssetManager.instance) {
+                    new AssetManager();
+                }
+                return AssetManager.instance;
+            }
+        }
+        
+        // Singleton instance
+        AssetManager.instance = null;
+        
+        class Time {
+            constructor() {
+                this.deltaTime = 0;
+                this.lastTime = 0;
+                this.fps = 0;
+                this.frameCount = 0;
+                this.fpsUpdateInterval = 0.5;
+                this.fpsTimer = 0;
+                
+                // Singleton instance
+                if (Time.instance) {
+                    return Time.instance;
+                }
+                Time.instance = this;
+            }
+            
+            start() {
+                this.lastTime = performance.now() / 1000;
+            }
+            
+            update() {
+                const currentTime = performance.now() / 1000;
+                this.deltaTime = currentTime - this.lastTime;
+                this.lastTime = currentTime;
+                
+                // FPS hesapla
+                this.frameCount++;
+                this.fpsTimer += this.deltaTime;
+                
+                if (this.fpsTimer >= this.fpsUpdateInterval) {
+                    this.fps = Math.round(this.frameCount / this.fpsTimer);
+                    this.fpsTimer = 0;
+                    this.frameCount = 0;
+                }
+            }
+            
+            static getInstance() {
+                if (!Time.instance) {
+                    new Time();
+                }
+                return Time.instance;
+            }
+        }
+        
+        // Singleton instance
+        Time.instance = null;
+        
+        class Input {
+            constructor() {
+                this.keys = {};
+                this.mousePosition = { x: 0, y: 0 };
+                this.mouseButtons = {};
+                this.touches = {};
+                this.touchStarted = false;
+                this.touchMoved = false;
+                this.touchEnded = false;
+                
+                // Olay dinleyicileri
+                document.addEventListener('keydown', (e) => this._onKeyDown(e));
+                document.addEventListener('keyup', (e) => this._onKeyUp(e));
+                document.addEventListener('mousemove', (e) => this._onMouseMove(e));
+                document.addEventListener('mousedown', (e) => this._onMouseDown(e));
+                document.addEventListener('mouseup', (e) => this._onMouseUp(e));
+                document.addEventListener('touchstart', (e) => this._onTouchStart(e));
+                document.addEventListener('touchmove', (e) => this._onTouchMove(e));
+                document.addEventListener('touchend', (e) => this._onTouchEnd(e));
+                
+                // Singleton instance
+                if (Input.instance) {
+                    return Input.instance;
+                }
+                Input.instance = this;
+            }
+            
+            update() {
+                this.touchStarted = false;
+                this.touchMoved = false;
+                this.touchEnded = false;
+            }
+            
+            isKeyDown(key) {
+                return this.keys[key] === true;
+            }
+            
+            isMouseButtonDown(button) {
+                return this.mouseButtons[button] === true;
+            }
+            
+            getMousePosition() {
+                return this.mousePosition;
+            }
+            
+            isTouchStarted() {
+                return this.touchStarted;
+            }
+            
+            isTouchMoving() {
+                return this.touchMoved;
+            }
+            
+            isTouchEnded() {
+                return this.touchEnded;
+            }
+            
+            getTouchPosition() {
+                for (const id in this.touches) {
+                    return this.touches[id];
+                }
+                return { x: 0, y: 0 };
+            }
+            
+            _onKeyDown(e) {
+                this.keys[e.key] = true;
+            }
+            
+            _onKeyUp(e) {
+                this.keys[e.key] = false;
+            }
+            
+            _onMouseMove(e) {
+                const canvas = document.getElementById('game-canvas');
+                
+                if (canvas) {
+                    const rect = canvas.getBoundingClientRect();
+                    this.mousePosition.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                    this.mousePosition.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                } else {
+                    this.mousePosition.x = e.clientX;
+                    this.mousePosition.y = e.clientY;
+                }
+            }
+            
+            _onMouseDown(e) {
+                this.mouseButtons[e.button] = true;
+            }
+            
+            _onMouseUp(e) {
+                this.mouseButtons[e.button] = false;
+            }
+            
+            _onTouchStart(e) {
+                e.preventDefault();
+                
+                const canvas = document.getElementById('game-canvas');
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    
+                    if (canvas) {
+                        const rect = canvas.getBoundingClientRect();
+                        this.touches[touch.identifier] = {
+                            x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+                            y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+                        };
+                    } else {
+                        this.touches[touch.identifier] = {
+                            x: touch.clientX,
+                            y: touch.clientY
+                        };
+                    }
+                }
+                
+                this.touchStarted = true;
+            }
+            
+            _onTouchMove(e) {
+                e.preventDefault();
+                
+                const canvas = document.getElementById('game-canvas');
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    
+                    if (canvas) {
+                        const rect = canvas.getBoundingClientRect();
+                        this.touches[touch.identifier] = {
+                            x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+                            y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+                        };
+                    } else {
+                        this.touches[touch.identifier] = {
+                            x: touch.clientX,
+                            y: touch.clientY
+                        };
+                    }
+                }
+                
+                this.touchMoved = true;
+            }
+            
+            _onTouchEnd(e) {
+                e.preventDefault();
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    delete this.touches[touch.identifier];
+                }
+                
+                this.touchEnded = true;
+            }
+            
+            static getInstance() {
+                if (!Input.instance) {
+                    new Input();
+                }
+                return Input.instance;
+            }
+        }
+        
+        // Singleton instance
+        Input.instance = null;
+        
+        class Renderer {
+            constructor(canvas, context) {
+                this.canvas = canvas;
+                this.context = context;
+                this.clearColor = '#000000';
+                
+                // Singleton instance
+                if (Renderer.instance) {
+                    return Renderer.instance;
+                }
+                Renderer.instance = this;
+            }
+            
+            clear() {
+                this.context.fillStyle = this.clearColor;
+                this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+            
+            static getInstance() {
+                if (!Renderer.instance) {
+                    const canvas = document.getElementById('game-canvas');
+                    const context = canvas ? canvas.getContext('2d') : null;
+                    if (canvas && context) {
+                        new Renderer(canvas, context);
+                    } else {
+                        console.error("Could not create Renderer, canvas or context is null");
+                    }
+                }
+                return Renderer.instance;
+            }
+        }
+        
+        // Singleton instance
+        Renderer.instance = null;
+        
+        class Physics {
+            constructor() {
+                this.gravity = { x: 0, y: 9.8 };
+                this.bodies = [];
+                
+                // Singleton instance
+                if (Physics.instance) {
+                    return Physics.instance;
+                }
+                Physics.instance = this;
+            }
+            
+            update(deltaTime) {
+                for (const body of this.bodies) {
+                    if (body.active && body.gameObject.active) {
+                        this._updateBody(body, deltaTime);
+                    }
+                }
+                
+                this._checkCollisions();
+            }
+            
+            _updateBody(body, deltaTime) {
+                // Yerçekimi uygula
+                if (body.useGravity) {
+                    body.velocity.x += this.gravity.x * deltaTime;
+                    body.velocity.y += this.gravity.y * deltaTime;
+                }
+                
+                // Hızı uygula
+                body.gameObject.transform.position.x += body.velocity.x * deltaTime;
+                body.gameObject.transform.position.y += body.velocity.y * deltaTime;
+                
+                // Sürtünmeyi uygula
+                body.velocity.x *= (1.0 - body.drag * deltaTime);
+                body.velocity.y *= (1.0 - body.drag * deltaTime);
+            }
+            
+            _checkCollisions() {
+                // Çarpışma kontrolü
+            }
+            
+            addBody(body) {
+                this.bodies.push(body);
+            }
+            
+            removeBody(body) {
+                const index = this.bodies.indexOf(body);
+                if (index !== -1) {
+                    this.bodies.splice(index, 1);
+                }
+            }
+            
+            static getInstance() {
+                if (!Physics.instance) {
+                    new Physics();
+                }
+                return Physics.instance;
+            }
+        }
+        
+        // Singleton instance
+        Physics.instance = null;
+        
+        class UIManager {
+            constructor(scene) {
+                this.scene = scene;
+                this.components = [];
+            }
+            
+            update(deltaTime) {
+                for (const component of this.components) {
+                    if (component.active && component.update) {
+                        component.update(deltaTime);
+                    }
+                }
+            }
+            
+            render(renderer) {
+                for (const component of this.components) {
+                    if (component.active && component.render) {
+                        component.render(renderer);
+                    }
+                }
+            }
+            
+            addComponent(component) {
+                this.components.push(component);
+                return component;
+            }
+            
+            removeComponent(component) {
+                const index = this.components.indexOf(component);
+                if (index !== -1) {
+                    this.components.splice(index, 1);
+                }
+            }
+        }
+        
+        class Engine {
+            constructor(config = {}) {
+                this.config = Object.assign({
+                    canvasId: 'game-canvas',
+                    width: 640,
+                    height: 960,
+                    fps: 60,
+                    debug: false
+                }, config);
+                
+                this.isRunning = false;
+                
+                // Canvas oluştur
+                this.canvas = document.getElementById(this.config.canvasId);
+                if (!this.canvas) {
+                    console.error(`Canvas not found: #${this.config.canvasId}`);
+                    return;
+                }
+                
+                this.context = this.canvas.getContext('2d');
+                
+                // Sistemleri oluştur
+                this.time = Time.getInstance();
+                this.input = Input.getInstance();
+                this.renderer = Renderer.getInstance();
+                this.physics = Physics.getInstance();
+                this.sceneManager = SceneManager.getInstance();
+                this.assetManager = AssetManager.getInstance();
+                
+                // Singleton instance
+                if (Engine.instance) {
+                    return Engine.instance;
+                }
+                Engine.instance = this;
+            }
+            
+            start() {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.time.start();
+                this.gameLoop();
+                
+                console.log("Engine started!");
+            }
+            
+            stop() {
+                this.isRunning = false;
+                console.log("Engine stopped!");
+            }
+            
+            gameLoop() {
+                if (!this.isRunning) return;
+                
+                // Delta time hesapla
+                this.time.update();
+                const deltaTime = this.time.deltaTime;
+                
+                // Girişleri güncelle
+                this.input.update();
+                
+                // Sahneyi güncelle
+                this.sceneManager.update(deltaTime);
+                
+                // Fizik simülasyonu
+                this.physics.update(deltaTime);
+                
+                // Render işlemleri
+                this.renderer.clear();
+                this.sceneManager.render(this.renderer);
+                
+                // Debug
+                if (this.config.debug && this.config.showFps) {
+                    this._drawFps();
+                }
+                
+                // Bir sonraki kareyi planla
+                requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            _drawFps() {
+                if (!this.context) return;
+                
+                this.context.fillStyle = '#00ff00';
+                this.context.font = '14px Arial';
+                this.context.textAlign = 'left';
+                this.context.fillText(`FPS: ${this.time.fps}`, 10, 20);
+            }
+            
+            static getInstance() {
+                if (!Engine.instance) {
+                    new Engine();
+                }
+                return Engine.instance;
+            }
+        }
+        
+        // Singleton instance
+        Engine.instance = null;
+        
+        class Game {
+            constructor(config = {}) {
+                this.config = Object.assign({
+                    canvasId: 'game-canvas',
+                    width: 640,
+                    height: 960,
+                    fps: 60,
+                    firstScene: null
+                }, config);
+                
+                // Motor örnekleri
+                this.engine = Engine.getInstance();
+                this.sceneManager = SceneManager.getInstance();
+                this.assetManager = AssetManager.getInstance();
+                
+                // Oyun durumu
+                this.isRunning = false;
+                this.isPaused = false;
+                this.isLoading = false;
+            }
+            
+            addScene(name, scene) {
+                this.sceneManager.addScene(name, scene);
+                
+                if (!this.config.firstScene) {
+                    this.config.firstScene = name;
+                }
+            }
+            
+            loadResources(resources, startOnLoad = false) {
+                this.isLoading = true;
+                
+                // Kaynak yükleme
+                for (const resource of resources) {
+                    if (resource.type === 'image') {
+                        this.assetManager.queueImage(resource.key, resource.url);
+                    } else if (resource.type === 'audio') {
+                        this.assetManager.queueAudio(resource.key, resource.url);
+                    } else if (resource.type === 'json') {
+                        this.assetManager.queueJSON(resource.key, resource.url);
+                    }
+                }
+                
+                // Yükleme olayları
+                this.assetManager.onProgress = (progress) => {
+                    this._updateLoadingScreen(progress);
+                };
+                
+                this.assetManager.onComplete = () => {
+                    this.isLoading = false;
+                    
+                    if (startOnLoad) {
+                        this.start();
+                    }
+                };
+                
+                // Yüklemeyi başlat
+                this.assetManager.startLoading();
+            }
+            
+            _updateLoadingScreen(progress) {
+                const progressBar = document.getElementById('loading-bar');
+                const progressText = document.getElementById('loading-text');
+                
+                if (progressBar) {
+                    progressBar.style.width = `${progress * 100}%`;
+                }
+                
+                if (progressText) {
+                    progressText.textContent = `Yükleniyor... ${Math.floor(progress * 100)}%`;
+                }
+            }
+            
+            start() {
+                if (this.isRunning) return;
+                
+                // Yükleme ekranını gizle
+                const loadingScreen = document.getElementById('loading-screen');
+                if (loadingScreen) {
+                    loadingScreen.style.display = 'none';
+                }
+                
+                // Motoru başlat
+                this.engine.start();
+                
+                // İlk sahneyi yükle
+                if (this.config.firstScene) {
+                    this.sceneManager.loadScene(this.config.firstScene);
+                }
+                
+                this.isRunning = true;
+            }
+            
+            pause() {
+                if (!this.isRunning || this.isPaused) return;
+                this.isPaused = true;
+            }
+            
+            resume() {
+                if (!this.isRunning || !this.isPaused) return;
+                this.isPaused = false;
+            }
+            
+            stop() {
+                if (!this.isRunning) return;
+                this.engine.stop();
+                this.isRunning = false;
+                this.isPaused = false;
+            }
+        }
+        
+        /**
+         * Oyun Bileşenleri
+         */
+        class Sprite extends Component {
+            constructor() {
+                super();
+                this.image = null;
+                this.width = 64;
+                this.height = 64;
+                this.color = '#3498db';
+                this.pivotX = 0.5;
+                this.pivotY = 0.5;
+            }
+            
+            render(renderer) {
+                if (!this.active || !renderer || !renderer.context) return;
+                
+                const position = this.transform.getWorldPosition();
+                const scale = this.transform.getWorldScale();
+                const rotation = this.transform.getWorldRotation();
+                
+                const width = this.width * scale.x;
+                const height = this.height * scale.y;
+                
+                renderer.context.save();
+                
+                // Pozisyona taşı
+                renderer.context.translate(position.x, position.y);
+                
+                // Döndür
+                renderer.context.rotate(rotation);
+                
+                // Çiz
+                if (this.image) {
+                    renderer.context.drawImage(
+                        this.image,
+                        -width * this.pivotX,
+                        -height * this.pivotY,
+                        width,
+                        height
+                    );
+                } else {
+                    // Resim yoksa renkli dikdörtgen çiz
+                    renderer.context.fillStyle = this.color;
+                    renderer.context.fillRect(
+                        -width * this.pivotX,
+                        -height * this.pivotY,
+                        width,
+                        height
+                    );
+                }
+                
+                renderer.context.restore();
+            }
+        }
+        
+        class Collider extends Component {
+            constructor() {
+                super();
+                this.width = 64;
+                this.height = 64;
+                this.offset = { x: 0, y: 0 };
+                this.isTrigger = false;
+            }
+            
+            getBounds() {
+                const position = this.transform.getWorldPosition();
+                
+                return {
+                    x: position.x + this.offset.x - this.width / 2,
+                    y: position.y + this.offset.y - this.height / 2,
+                    width: this.width,
+                    height: this.height
+                };
+            }
+            
+            intersects(other) {
+                const a = this.getBounds();
+                const b = other.getBounds();
+                
+                return !(
+                    a.x > b.x + b.width ||
+                    a.x + a.width < b.x ||
+                    a.y > b.y + b.height ||
+                    a.y + a.height < b.y
+                );
+            }
+            
+            render(renderer) {
+                if (!this.active || !renderer || !renderer.context || !this.gameObject.scene || !this.gameObject.scene.engine || !this.gameObject.scene.engine.config.debug) return;
+                
+                const bounds = this.getBounds();
+                
+                renderer.context.save();
+                renderer.context.strokeStyle = this.isTrigger ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 0, 0, 0.5)';
+                renderer.context.lineWidth = 1;
+                renderer.context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+                renderer.context.restore();
+            }
+        }
+        
+        class Rigidbody extends Component {
+            constructor() {
+                super();
+                this.velocity = { x: 0, y: 0 };
+                this.acceleration = { x: 0, y: 0 };
+                this.useGravity = true;
+                this.mass = 1;
+                this.drag = 0.1;
+                this.bounciness = 0.5;
+                
+                // Fizik sistemine ekle
+                if (Physics.instance) {
+                    Physics.instance.addBody(this);
+                }
+            }
+            
+            start() {
+                if (Physics.instance) {
+                    Physics.instance.addBody(this);
+                }
+            }
+            
+            onDestroy() {
+                if (Physics.instance) {
+                    Physics.instance.removeBody(this);
+                }
+            }
+            
+            addForce(x, y) {
+                this.acceleration.x += x / this.mass;
+                this.acceleration.y += y / this.mass;
+            }
+        }
+        
+        /**
+         * Oyun Sahneleri
+         */
+        class LoadingScene extends Scene {
+            constructor() {
+                super("LoadingScene");
+            }
+            
+            load() {
+                super.load();
+                console.log("LoadingScene yüklendi");
+            }
+            
+            start() {
+                super.start();
+                console.log("LoadingScene başlatıldı");
+                
+                // Yükleme ekranını göster
+                const loadingScreen = document.getElementById('loading-screen');
+                if (loadingScreen) {
+                    loadingScreen.style.display = 'flex';
+                }
+            }
+            
+            update(deltaTime) {
+                super.update(deltaTime);
+                
+                // Yükleme durumunu kontrol et
+                const assetManager = AssetManager.getInstance();
+                if (!assetManager.loading) {
+                    // Yükleme tamamlandı, ana menüye geç
+                    const sceneManager = SceneManager.getInstance();
+                    sceneManager.loadScene('MainMenuScene');
+                }
+            }
+            
+            stop() {
+                super.stop();
+                console.log("LoadingScene durduruldu");
+                
+                // Yükleme ekranını gizle
+                const loadingScreen = document.getElementById('loading-screen');
+                if (loadingScreen) {
+                    loadingScreen.style.display = 'none';
+                }
+            }
+        }
+        
+        class MainMenuScene extends Scene {
+            constructor() {
+                super("MainMenuScene");
+                this._onCanvasClick = this._onCanvasClick.bind(this);
+            }
+            
+            load() {
+                super.load();
+                console.log("MainMenuScene yüklendi");
+                
+                // Başlık
+                const title = new GameObject("Title");
+                title.transform.position.x = 320;
+                title.transform.position.y = 200;
+                
+                const titleSprite = new Sprite();
+                titleSprite.width = 400;
+                titleSprite.height = 80;
+                titleSprite.color = '#3498db';
+                title.addComponent(titleSprite);
+                
+                this.addGameObject(title);
+                
+                // Başlat butonu
+                const playButton = new GameObject("PlayButton");
+                playButton.transform.position.x = 320;
+                playButton.transform.position.y = 400;
+                
+                const buttonSprite = new Sprite();
+                buttonSprite.width = 200;
+                buttonSprite.height = 60;
+                buttonSprite.color = '#e74c3c';
+                playButton.addComponent(buttonSprite);
+                
+                this.addGameObject(playButton);
+                
+                // Buton metni
+                this.titleText = "HyperEngine Demo";
+                this.buttonText = "PLAY";
+            }
+            
+            start() {
+                super.start();
+                console.log("MainMenuScene başlatıldı");
+                
+                // Canvas tıklama olayını ekle
+                const canvas = document.getElementById('game-canvas');
+                if (canvas) {
+                    canvas.addEventListener('click', this._onCanvasClick);
+                }
+            }
+            
+            _onCanvasClick() {
+                // Oyunu başlat
+                const sceneManager = SceneManager.getInstance();
+                sceneManager.loadScene('GameScene');
+            }
+            
+            render(renderer) {
+                super.render(renderer);
+                
+                if (!renderer || !renderer.context) return;
+                
+                // Başlık metni
+                renderer.context.fillStyle = '#ffffff';
+                renderer.context.font = 'bold 32px Arial';
+                renderer.context.textAlign = 'center';
+                renderer.context.fillText(this.titleText, 320, 210);
+                
+                // Buton metni
+                renderer.context.fillStyle = '#ffffff';
+                renderer.context.font = 'bold 24px Arial';
+                renderer.context.textAlign = 'center';
+                renderer.context.fillText(this.buttonText, 320, 410);
+            }
+            
+            stop() {
+                super.stop();
+                console.log("MainMenuScene durduruldu");
+                
+                // Canvas tıklama olayını kaldır
+                const canvas = document.getElementById('game-canvas');
+                if (canvas) {
+                    canvas.removeEventListener('click', this._onCanvasClick);
+                }
+            }
+        }
+        
+        class GameScene extends Scene {
+            constructor() {
+                super("GameScene");
+                this.score = 0;
+                this.player = null;
+            }
+            
+            load() {
+                super.load();
+                console.log("GameScene yüklendi");
+                
+                // Oyuncu oluştur
+                const player = new GameObject("Player");
+                player.transform.position.x = 320;
+                player.transform.position.y = 800;
+                
+                const playerSprite = new Sprite();
+                playerSprite.width = 50;
+                playerSprite.height = 50;
+                playerSprite.color = '#2ecc71';
+                player.addComponent(playerSprite);
+                
+                const playerCollider = new Collider();
+                playerCollider.width = 50;
+                playerCollider.height = 50;
+                player.addComponent(playerCollider);
+                
+                const playerRb = new Rigidbody();
+                playerRb.useGravity = false;
+                player.addComponent(playerRb);
+                
+                this.addGameObject(player);
+                this.player = player;
+                
+                // Engeller oluştur
+                for (let i = 0; i < 5; i++) {
+                    this._createObstacle(Math.random() * 640, Math.random() * 400);
+                }
+            }
+            
+            _createObstacle(x, y) {
+                const obstacle = new GameObject("Obstacle");
+                obstacle.transform.position.x = x;
+                obstacle.transform.position.y = y;
+                
+                const obstacleSprite = new Sprite();
+                obstacleSprite.width = 40;
+                obstacleSprite.height = 40;
+                obstacleSprite.color = '#e74c3c';
+                obstacle.addComponent(obstacleSprite);
+                
+                const obstacleCollider = new Collider();
+                obstacleCollider.width = 40;
+                obstacleCollider.height = 40;
+                obstacle.addComponent(obstacleCollider);
+                
+                this.addGameObject(obstacle);
+                return obstacle;
+            }
+            
+            update(deltaTime) {
+                super.update(deltaTime);
+                
+                // Oyuncu kontrolü
+                if (this.player) {
+                    const input = Input.getInstance();
+                    const playerRb = this.player.getComponent(Rigidbody);
+                    
+                    if (playerRb) {
+                        // Klavye kontrolü
+                        if (input.isKeyDown('ArrowLeft')) {
+                            playerRb.velocity.x = -200;
+                        } else if (input.isKeyDown('ArrowRight')) {
+                            playerRb.velocity.x = 200;
+                        } else {
+                            playerRb.velocity.x = 0;
+                        }
+                        
+                        // Dokunma kontrolü
+                        if (input.isTouchStarted() || input.isMouseButtonDown(0)) {
+                            const touchPos = input.getTouchPosition() || input.getMousePosition();
+                            const playerPos = this.player.transform.position;
+                            
+                            if (touchPos.x < playerPos.x) {
+                                playerRb.velocity.x = -200;
+                            } else {
+                                playerRb.velocity.x = 200;
+                            }
+                        }
+                        
+                        // Ekran sınırlarını kontrol et
+                        if (this.player.transform.position.x < 25) {
+                            this.player.transform.position.x = 25;
+                            playerRb.velocity.x = 0;
+                        } else if (this.player.transform.position.x > 615) {
+                            this.player.transform.position.x = 615;
+                            playerRb.velocity.x = 0;
+                        }
+                    }
+                }
+                
+                // Çarpışmaları kontrol et
+                this._checkCollisions();
+            }
+            
+            _checkCollisions() {
+                if (!this.player) return;
+                
+                const playerCollider = this.player.getComponent(Collider);
+                if (!playerCollider) return;
+                
+                for (const obj of this.gameObjects) {
+                    if (obj.name === "Obstacle") {
+                        const obstacleCollider = obj.getComponent(Collider);
+                        
+                        if (obstacleCollider && playerCollider.intersects(obstacleCollider)) {
+                            console.log("Çarpışma!");
+                            
+                            // Skoru artır
+                            this.score += 10;
+                            
+                            // Engeli kaldır
+                            this.removeGameObject(obj);
+                            
+                            // Yeni engel oluştur
+                            this._createObstacle(Math.random() * 640, 0);
+                            
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            render(renderer) {
+                super.render(renderer);
+                
+                if (!renderer || !renderer.context) return;
+                
+                // Skor
+                renderer.context.fillStyle = '#ffffff';
+                renderer.context.font = '24px Arial';
+                renderer.context.textAlign = 'left';
+                renderer.context.fillText(`Skor: ${this.score}`, 20, 30);
+            }
+        }
+    </script>
+    
+    <!-- Oyun Kodumuz -->
+    <script>
+        // Yükleme ekranı
+        function updateLoadingBar(progress) {
+            const bar = document.getElementById('loading-bar');
+            const text = document.getElementById('loading-text');
+            
+            bar.style.width = `${progress * 100}%`;
+            text.textContent = `Yükleniyor... ${Math.round(progress * 100)}%`;
+        }
+        
+        // Sayfa yüklendiğinde oyunu başlat
+        window.onload = function() {
+            try {
+                // Canvas boyutunu ayarla
+                const canvas = document.getElementById('game-canvas');
+                canvas.width = 640;
+                canvas.height = 960;
+                
+                // AssetManager olayları
+                const assetManager = AssetManager.getInstance();
+                assetManager.onProgress = (progress) => {
+                    updateLoadingBar(progress);
+                };
+                
+                // Oyunu oluştur
+                const game = new Game({
+                    canvasId: 'game-canvas',
+                    width: 640,
+                    height: 960,
+                    fps: 60,
+                    debug: true,
+                    showFps: true
+                });
+                
+                // Sahneleri ekle
+                game.addScene('LoadingScene', new LoadingScene());
+                game.addScene('MainMenuScene', new MainMenuScene());
+                game.addScene('GameScene', new GameScene());
+                
+                // Yükleme sahnesini ayarla
+                game.config.firstScene = 'MainMenuScene';
+                
+                // Kaynakları yüklemeye başla
+                game.loadResources([
+                    // Örnek kaynaklar
+                    // Dosyalar mevcut olmadığı için burayı boş bırakıyoruz
+                ], true);
+                
+                console.log("HyperEngine Oyun başlatıldı!");
+            } catch (error) {
+                console.error("Oyun başlatılırken hata oluştu:", error);
+            }
+        };
+    </script>
+</body>
+</html>
